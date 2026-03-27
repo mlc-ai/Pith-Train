@@ -15,8 +15,7 @@ PithTrain is built to be understood — by humans and AI agents alike. At ~10K l
 Hopper (SM90) or Blackwell (SM100) GPUs are required. CUDA 13.0 and Python >= 3.12 are required. We use [uv](https://docs.astral.sh/uv/) to manage project dependencies.
 
 ```bash
-git clone https://github.com/mlc-ai/PithTrain.git
-cd PithTrain
+git clone https://github.com/mlc-ai/Pith-Train.git && cd Pith-Train
 uv venv  # skip if you already have a virtual environment
 ```
 
