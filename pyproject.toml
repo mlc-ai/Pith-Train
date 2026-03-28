@@ -5,7 +5,7 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "deep-gemm",
-    "flash-attn",
+    "flash-attn-4>=4.0.0b5",
     "tilelang",
     "torch>=2.10.0",
     "transformers",
@@ -41,17 +41,8 @@ deep-gemm = [
     "setuptools",
     "wheel",
 ]
-flash-attn = [
-    { requirement = "torch", match-runtime = true },
-    "ninja",
-    "packaging",
-    "psutil",
-    "wheel",
-]
-
 [tool.uv.extra-build-variables]
 deep-gemm = { DG_FORCE_BUILD = "1", DG_USE_LOCAL_VERSION = "0" }
-flash-attn = { FLASH_ATTENTION_FORCE_BUILD = "TRUE", FLASH_ATTN_CUDA_ARCHS = "90;100" }
 
 [tool.mypy]
 follow_imports = "skip"

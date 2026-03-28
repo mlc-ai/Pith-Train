@@ -8,7 +8,6 @@ from typing import List, Optional, Tuple
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from flash_attn import flash_attn_func
 from torch import nn
 
 from pithtrain.dualpipe.execution import (
@@ -28,6 +27,7 @@ from pithtrain.layers.factory import (
 from pithtrain.models.interface import ForwardAttnOutput
 from pithtrain.modules.load_balance import MoELoadBalanceLossInjector, MoELoadBalanceLossTracker
 from pithtrain.operators.ep_dispatch import moe_ep_prepare_dispatch
+from pithtrain.operators.flash_attn_v4 import flash_attn_func
 from pithtrain.operators.ring_attention.standard import ring_attention_func
 from pithtrain.operators.token_scatter import precompute_group_indices, scatter_for_grouped_gemm
 

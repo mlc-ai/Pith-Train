@@ -23,7 +23,7 @@ Known limitations
 
 import torch
 import torch.distributed as dist
-from flash_attn.flash_attn_interface import _flash_attn_backward, _flash_attn_forward
+from flash_attn.cute.interface import _flash_attn_bwd, _flash_attn_fwd
 
 
 def _ring_send_recv_kv(
@@ -88,8 +88,8 @@ class RingAttentionFunc(torch.autograd.Function):
 
             if kv_rank <= cp_rank:
                 use_causal = kv_rank == cp_rank
-                step_out, step_lse, _, _ = _flash_attn_forward(
-                    q, cur_k, cur_v, 0.0, softmax_scale, use_causal, -1, -1, 0.0, None, False
+                step_out, step_lse = _flash_attn_fwd(
+                    q, cur_k, cur_v, softmax_scale=softmax_scale, causal=use_causal, return_lse=True
                 )
                 combined_out, combined_lse = _online_softmax_combine(
                     combined_out, combined_lse, step_out, step_lse
@@ -128,28 +128,15 @@ class RingAttentionFunc(torch.autograd.Function):
         remote_dk, remote_dv = {}, {}
 
         for i, kv_rank in enumerate(ctx.saved_ranks):
-            dq_s = torch.zeros_like(q)
-            dk_s = torch.zeros_like(all_k[i])
-            dv_s = torch.zeros_like(all_v[i])
-            _flash_attn_backward(
-                dout,
+            dq_s, dk_s, dv_s = _flash_attn_bwd(
                 q,
                 all_k[i],
                 all_v[i],
                 combined_out,
+                dout,
                 combined_lse,
-                dq_s,
-                dk_s,
-                dv_s,
-                0.0,
-                ctx.softmax_scale,
-                kv_rank == cp_rank,
-                -1,
-                -1,
-                0.0,
-                None,
-                False,
-                None,
+                softmax_scale=ctx.softmax_scale,
+                causal=(kv_rank == cp_rank),
             )
             dq += dq_s
             if kv_rank == cp_rank:

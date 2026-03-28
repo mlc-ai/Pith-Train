@@ -13,8 +13,8 @@ import sys
 
 import torch
 import torch.distributed as dist
-from flash_attn import flash_attn_func
 
+from pithtrain.operators.flash_attn_v4 import flash_attn_func
 from pithtrain.operators.ring_attention.standard import ring_attention_func
 
 
