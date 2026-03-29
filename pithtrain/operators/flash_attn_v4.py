@@ -1,9 +1,10 @@
 """
-Flash Attention 4 (CuTeDSL) custom_op wrapper for GQA.
+Flash Attention 4 (CuTeDSL) custom_op wrapper.
 
 Wraps FA4's internal _flash_attn_fwd/_flash_attn_bwd with torch.library.custom_op
 so that torch.compile can trace through them.
 
+Supports both symmetric (GQA) and asymmetric (MLA) head dimensions.
 Layout: BSHD (batch, sequence, heads, head_dim).
 """
 
@@ -22,8 +23,8 @@ def _flash_attn_fa4_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, softm
 
 @_flash_attn_fa4_fwd.register_fake
 def _(q, k, v, softmax_scale, causal):
-    (b, s, h, d) = q.shape
-    o = torch.empty((b, s, h, d), dtype=q.dtype, device=q.device)
+    (b, s, h, _), dv = q.shape, v.shape[-1]
+    o = torch.empty((b, s, h, dv), dtype=q.dtype, device=q.device)
     lse = torch.empty((b, h, s), dtype=torch.float32, device=q.device)
     return o, lse
 

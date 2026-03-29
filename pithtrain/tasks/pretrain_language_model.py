@@ -26,7 +26,6 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from transformers import AutoConfig
 
 from pithtrain.config import SlottedDefault
 from pithtrain.modules.checkpoint import (
@@ -39,7 +38,6 @@ from pithtrain.modules.distributed import DistributedCfg, DistributedCtx, distri
 from pithtrain.modules.load_balance import MoELoadBalanceLossTracker
 from pithtrain.modules.logging import LoggingCfg, LoggingCtx, activate_wandb, logging_context
 from pithtrain.modules.training import TrainingCfg, TrainingCtx, training_context
-from pithtrain.operators.mla import MLA
 
 
 @dataclass(init=False, slots=True)
@@ -485,21 +483,6 @@ def launch(cfg: PretrainLanguageModelCfg) -> None:
         stack.enter_context(training_context(cfg, ctx))
         logger = ctx.logging.stdout
         logger.info("launch(cfg=%s)" % cfg)
-        model_config = AutoConfig.from_pretrained(cfg.training.model)
-        if model_config.model_type == "deepseek_v2":
-            cp_size = ctx.distributed.cp_size
-            B = cfg.training.micro_batch_size
-            S = cfg.training.sequence_length // cp_size
-            H = model_config.num_attention_heads
-            DQ = model_config.qk_nope_head_dim + model_config.qk_rope_head_dim
-            DV = model_config.v_head_dim
-            if ctx.distributed.rank == 0:
-                MLA.autotune(B, S, H, DQ, DV, DQ**-0.5, include_non_causal=(cp_size > 1))
-                if cp_size > 1:
-                    from pithtrain.operators.mla.triton import MLA as MLATriton
-
-                    MLATriton.autotune(B, S, H, DQ, DV, DQ**-0.5, include_non_causal=True)
-            torch.distributed.barrier()
         load_checkpoint(cfg, ctx)
         raise_if_dataset_insufficient(cfg, ctx)
         while ctx.training.step < cfg.training.max_steps:

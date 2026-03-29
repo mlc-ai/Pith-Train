@@ -21,7 +21,6 @@ from pithtrain.layers.group_linear import GroupLinear
 from pithtrain.models.deepseek_v2_lite import DeepseekV2LiteModel, DeepseekV2LiteMoEGate
 from pithtrain.models.qwen3_30b_a3b import Qwen3MoeGate, Qwen3MoeModel
 from pithtrain.modules.distributed import DistributedCfg, DistributedCtx, distributed_context
-from pithtrain.operators.mla import MLA
 
 
 def fill_weights(module: nn.Module):
@@ -168,11 +167,6 @@ def main(ctx: DistributedCtx, model_name: str):
 
     if config.model_type == "deepseek_v2":
         ModelClass = DeepseekV2LiteModel
-        if ctx.rank == 0:
-            H = config.num_attention_heads
-            DQ = config.qk_nope_head_dim + config.qk_rope_head_dim
-            DV = config.v_head_dim
-            MLA.autotune(B, S, H, DQ, DV, DQ**-0.5)
         config.num_hidden_layers = min(config.num_hidden_layers, 8)
     elif config.model_type == "qwen3_moe":
         ModelClass = Qwen3MoeModel
