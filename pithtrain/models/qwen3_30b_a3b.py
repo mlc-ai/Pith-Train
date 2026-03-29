@@ -385,7 +385,6 @@ class Qwen3MoeAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
-        attention_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass for GQA attention.
@@ -396,8 +395,6 @@ class Qwen3MoeAttention(nn.Module):
             Input tensor of shape [batch, seq_len, hidden_size].
         position_embeddings : Tuple[torch.Tensor, torch.Tensor]
             Tuple of (cos, sin) for rotary embeddings.
-        attention_mask : Optional[torch.Tensor]
-            Attention mask (unused with Flash Attention causal mode).
 
         Returns
         -------
@@ -519,7 +516,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
     def _forward_attn_compute(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor],
     ):
         residual = hidden_states
@@ -532,7 +528,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
         hidden_states = self.self_attn(
             hidden_states=hidden_states,
             position_embeddings=position_embeddings,
-            attention_mask=attention_mask,
         )
         hidden_states = residual + hidden_states
 
@@ -544,13 +539,10 @@ class Qwen3MoeDecoderLayer(nn.Module):
     def forward_attn(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ) -> ForwardAttnOutput:
         """LN + Attn + LN + Expert selection."""
-        hidden_states, residual = self._forward_attn_compute(
-            hidden_states, attention_mask, position_ids
-        )
+        hidden_states, residual = self._forward_attn_compute(hidden_states, position_ids)
 
         if isinstance(self.mlp, Qwen3MoeMLP):
             return ForwardAttnOutput(
@@ -658,7 +650,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
     def reference_forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
@@ -677,7 +668,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
             hidden_states = self.self_attn(
                 hidden_states=hidden_states,
                 position_embeddings=position_embeddings,
-                attention_mask=attention_mask,
             )
         finally:
             self.self_attn._disable_ring_attn = False
@@ -783,7 +773,6 @@ class Qwen3MoeModel(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
@@ -794,8 +783,6 @@ class Qwen3MoeModel(nn.Module):
         hidden_states : torch.Tensor
             Input tensor. If stage_id == 0, this should be input_ids.
             Otherwise, it should be hidden states from the previous stage.
-        attention_mask : Optional[torch.Tensor]
-            Attention mask.
         position_ids : Optional[torch.LongTensor]
             Position indices.
 
@@ -829,7 +816,7 @@ class Qwen3MoeModel(nn.Module):
             if self.embed_tokens is not None:
                 pass
             for _, layer in self.layers.items():
-                ret = decoder_layer_forward(layer, hidden_states, attention_mask, position_ids)
+                ret = decoder_layer_forward(layer, hidden_states, position_ids)
                 hidden_states = ret[0] if isinstance(ret, tuple) else ret
             if self.norm is not None:
                 hidden_states = self.norm(hidden_states)
@@ -842,7 +829,7 @@ class Qwen3MoeModel(nn.Module):
             intermediate_tensors.prolog.outs = PrologOuts(hidden_states)
 
         for _, layer in self.layers.items():
-            ret = decoder_layer_forward(layer, hidden_states, attention_mask, position_ids)
+            ret = decoder_layer_forward(layer, hidden_states, position_ids)
             if len(ret) == 2:
                 hidden_states, layer_record = ret
                 dst = intermediate_tensors.layers[layer_idx]

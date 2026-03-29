@@ -78,7 +78,6 @@ def decoder_layer_forward_combine(
 def decoder_layer_forward(
     layer: DecoderLayerProtocol,
     hidden_states: torch.Tensor,
-    attention_mask: Optional[torch.Tensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
 ):
     """
@@ -87,7 +86,7 @@ def decoder_layer_forward(
 
     if ModelImplMode.use_reference_fwd:
         return (
-            layer.reference_forward(hidden_states, attention_mask, position_ids),
+            layer.reference_forward(hidden_states, position_ids),
             [],
         )
 
@@ -100,7 +99,7 @@ def decoder_layer_forward(
     next_hidden_states = hidden_states.detach().requires_grad_()
     record.args = Stage1Args(prev_hidden_states, next_hidden_states)
 
-    output = layer.forward_attn(next_hidden_states, attention_mask, position_ids)
+    output = layer.forward_attn(next_hidden_states, position_ids)
     (
         hidden_states,
         sorted_tokens,

@@ -420,7 +420,6 @@ class DeepseekV2LiteAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
@@ -507,7 +506,6 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
     def _forward_attn_compute(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor],
     ):
         residual = hidden_states
@@ -515,7 +513,6 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
         # Self Attention
         hidden_states = self.self_attn(
             hidden_states=hidden_states,
-            attention_mask=attention_mask,
             position_ids=position_ids,
         )
         hidden_states = residual + hidden_states
@@ -528,13 +525,10 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
     def forward_attn(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ):
         """LN + Attn + LN + Expert selection"""
-        hidden_states, residual = self._forward_attn_compute(
-            hidden_states, attention_mask, position_ids
-        )
+        hidden_states, residual = self._forward_attn_compute(hidden_states, position_ids)
 
         assert isinstance(self.mlp, (DeepseekV2LiteMLP, DeepseekV2LiteMoEWithGroupGeMM))
         if isinstance(self.mlp, DeepseekV2LiteMLP):
@@ -648,7 +642,6 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
     def reference_forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ):
         residual = hidden_states
@@ -659,7 +652,6 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
         try:
             hidden_states = self.self_attn(
                 hidden_states=hidden_states,
-                attention_mask=attention_mask,
                 position_ids=position_ids,
             )
         finally:
@@ -726,7 +718,6 @@ class DeepseekV2LiteModel(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ):
         # Get pre-allocated intermediate_tensors from module attribute (set by DualPipeV)
@@ -745,7 +736,7 @@ class DeepseekV2LiteModel(nn.Module):
                     offset, offset + seq_len, device=hidden_states.device
                 ).unsqueeze(0)
             for _, layer in self.layers.items():
-                ret = decoder_layer_forward(layer, hidden_states, attention_mask, position_ids)
+                ret = decoder_layer_forward(layer, hidden_states, position_ids)
                 hidden_states = ret[0] if isinstance(ret, tuple) else ret
             if self.norm is not None:
                 hidden_states = self.norm(hidden_states)
@@ -767,7 +758,7 @@ class DeepseekV2LiteModel(nn.Module):
             ).unsqueeze(0)
 
         for _, layer in self.layers.items():
-            ret = decoder_layer_forward(layer, hidden_states, attention_mask, position_ids)
+            ret = decoder_layer_forward(layer, hidden_states, position_ids)
             if len(ret) == 2:
                 hidden_states, layer_record = ret
                 # Copy into pre-allocated slot

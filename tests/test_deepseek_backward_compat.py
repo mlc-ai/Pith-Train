@@ -18,7 +18,6 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.attention.flex_attention import create_block_mask
 from transformers import AutoConfig
 
 from pithtrain.dualpipe import DualPipeV, set_p2p_tensor_dtype, set_p2p_tensor_shapes
@@ -105,14 +104,7 @@ def main():
 
         apply_fsdp(modules, ctx.device_mesh)
 
-        def causal(b, h, q_idx, kv_idx):
-            return q_idx >= kv_idx
-
-        attention_mask = create_block_mask(causal, B=None, H=None, Q_LEN=S, KV_LEN=S)
-
-        model = DualPipeV(
-            modules, const_inputs=(attention_mask,), pp_group=pp_group, ep_group=ep_group
-        )
+        model = DualPipeV(modules, const_inputs=(), pp_group=pp_group, ep_group=ep_group)
         set_p2p_tensor_shapes([(B, S, hidden_size)])
         set_p2p_tensor_dtype(dtype)
 

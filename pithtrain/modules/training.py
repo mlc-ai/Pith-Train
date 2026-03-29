@@ -15,7 +15,6 @@ import torch
 import torch.distributed.fsdp
 import torch.nn as nn
 from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
-from torch.nn.attention.flex_attention import create_block_mask
 from torch.optim import Adam, Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, LRScheduler, SequentialLR
 from transformers import AutoConfig
@@ -331,14 +330,9 @@ def setup_model(cfg: TrainingCfg, ctx: TrainingCtx, distributed: DistributedCtx)
     modules = nn.Sequential(*modules)
     apply_fsdp(modules, device_mesh)
 
-    def causal(b, h, q_idx, kv_idx):
-        return q_idx >= kv_idx
-
     local_seq_len = cfg.sequence_length // cp_size
     # sequence_length = cfg.sequence_length, TODO this is kept here for stripe context parallelism
     micro_batch_size = cfg.micro_batch_size
-    B, H, Q_LEN, KV_LEN = None, None, local_seq_len, local_seq_len
-    attention_mask = create_block_mask(causal, B, H, Q_LEN, KV_LEN)
 
     # Propagate MoE load balance loss to gate modules.
     if cfg.moe_load_balance_coef > 0:
@@ -360,9 +354,7 @@ def setup_model(cfg: TrainingCfg, ctx: TrainingCtx, distributed: DistributedCtx)
                     if cp_group is not None:
                         gate.compute = gate.compute.__wrapped__.__get__(gate, type(gate))
 
-    ctx.model = DualPipeV(
-        modules, const_inputs=(attention_mask,), pp_group=pp_group, ep_group=ep_group
-    )
+    ctx.model = DualPipeV(modules, const_inputs=(), pp_group=pp_group, ep_group=ep_group)
     set_p2p_tensor_shapes([(micro_batch_size, local_seq_len, hidden_size)])
     set_p2p_tensor_dtype(torch.bfloat16)
 

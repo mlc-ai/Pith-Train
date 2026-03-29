@@ -44,7 +44,6 @@ class DecoderLayerProtocol(Protocol):
     def reference_forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
@@ -54,7 +53,6 @@ class DecoderLayerProtocol(Protocol):
     def forward_attn(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ) -> ForwardAttnOutput:
         """

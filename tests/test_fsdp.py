@@ -13,7 +13,6 @@ import torch.distributed.fsdp
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
-from torch.nn.attention.flex_attention import create_block_mask
 from transformers import AutoConfig
 
 from pithtrain.dualpipe import DualPipeV, set_p2p_tensor_dtype, set_p2p_tensor_shapes
@@ -55,11 +54,10 @@ def reference_step(
     l: torch.Tensor,  # noqa: E741
     model: Union[DeepseekV2LiteModel, Qwen3MoeModel],
     chunks: int,
-    attention_mask: torch.Tensor,
 ):
     ys, ls = [], []
     for micro_x, micro_l in zip(x.chunk(chunks), l.chunk(chunks)):
-        micro_y = model(micro_x, attention_mask=attention_mask)
+        micro_y = model(micro_x)
         loss = criterion(micro_y, micro_l)
         loss.backward()
         ys.append(micro_y)
@@ -199,13 +197,6 @@ def main(ctx: DistributedCtx, model_name: str):
         ep_rank
     ]
 
-    def causal(b, h, q_idx, kv_idx):
-        return q_idx >= kv_idx
-
-    attention_mask = create_block_mask(
-        causal, B=None, H=None, Q_LEN=sequence_length, KV_LEN=sequence_length
-    )
-
     # Create the reference full model.
     config.ep_size = 1
 
@@ -221,9 +212,7 @@ def main(ctx: DistributedCtx, model_name: str):
     torch.distributed.barrier()
 
     ModelImplMode.use_reference_fwd = True
-    loss_ref, output_ref = reference_step(
-        full_x, full_l, full_modules, num_chunks * ep_size, attention_mask
-    )
+    loss_ref, output_ref = reference_step(full_x, full_l, full_modules, num_chunks * ep_size)
 
     if ctx.rank == 0:
         print("[INFO] Completed the reference step.", flush=True)
@@ -279,7 +268,7 @@ def main(ctx: DistributedCtx, model_name: str):
     kwargs = dict()
     kwargs["pp_group"] = pp_group
     kwargs["ep_group"] = ep_group
-    kwargs["const_inputs"] = (attention_mask,)
+    kwargs["const_inputs"] = ()
     dualpipev_model = DualPipeV(local_modules, **kwargs)
 
     # Run the DualPipeV step.

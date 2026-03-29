@@ -62,7 +62,6 @@ def stage1_f(
     ctx: ExecutionCtx,
     layer: DecoderLayerProtocol,
     hidden_states: torch.Tensor,
-    attention_mask: torch.Tensor,
     position_ids: torch.Tensor,
 ):
     """
@@ -75,7 +74,7 @@ def stage1_f(
     next_hidden_states = hidden_states.detach().requires_grad_()
     record.args = Stage1Args(prev_hidden_states, next_hidden_states)
 
-    output = layer.forward_attn(next_hidden_states, attention_mask, position_ids)
+    output = layer.forward_attn(next_hidden_states, position_ids)
     ctx.comp_stream.record_event(ctx.fwd_event)
 
     if hasattr(layer.mlp, "experts"):
@@ -457,7 +456,6 @@ def stage5_and_stage1_f(
     topk_weight: torch.Tensor,
     hidden_states: torch.Tensor,
     residual: torch.Tensor,
-    attention_mask: torch.Tensor,
     position_ids: torch.Tensor,
 ):
     """
@@ -479,7 +477,7 @@ def stage5_and_stage1_f(
         moe_outs, moe_local_idxs, topk_weight, hidden_states, residual
     )
 
-    output = next_layer.forward_attn(hidden_states, attention_mask, position_ids)
+    output = next_layer.forward_attn(hidden_states, position_ids)
     ctx.comp_stream.record_event(ctx.fwd_event)
 
     if hasattr(next_layer.mlp, "experts"):
