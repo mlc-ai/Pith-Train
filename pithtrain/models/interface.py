@@ -9,7 +9,6 @@ class ForwardAttnOutput(NamedTuple):
     Output from the forward_attn method of a decoder layer.
     """
 
-    hidden_states: torch.Tensor
     sorted_tokens: torch.Tensor
     moe_local_idxs: torch.Tensor
     topk_weight: torch.Tensor
@@ -74,7 +73,6 @@ class DecoderLayerProtocol(Protocol):
         moe_outs: torch.Tensor,
         moe_local_idxs: Optional[torch.Tensor],
         topk_weight: Optional[torch.Tensor],
-        moe_input_hidden_states: torch.Tensor,
         residual: torch.Tensor,
     ) -> torch.Tensor:
         """

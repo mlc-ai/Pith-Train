@@ -17,7 +17,6 @@ from pithtrain.dualpipe.execution import (
     ExecutionCtx,
     IntermediateTensors,
     IntermediateTensorsLayer,
-    Stage1OutsMoe,
     epilog_f,
     prolog_b,
     prolog_f,
@@ -114,17 +113,9 @@ def overlapped_forward_backward(
     assert output_grads1 is not None
 
     record = intermediate_tensors1.layers[-1].stage5
-    moe_outs_grad, topk_weight_grad, hidden_states_grad, residual_grad = stage5_b(
+    moe_outs_grad, topk_weight_grad, residual_grad = stage5_b(
         ctx, module1_layers[-1], record, tuple(output_grads1)
     )
-
-    # Some models do not have shared experts, so the original hidden states weren't used
-    # during the forward pass of stage 5. As a result, its gradients will be None. For
-    # compatibility with the pipeline, we manually set its gradient to zero here.
-    if hidden_states_grad is None:
-        outs = intermediate_tensors1.layers[-1].stage1.outs
-        data = outs.hidden_states if isinstance(outs, Stage1OutsMoe) else outs.sorted_tokens
-        hidden_states_grad = torch.zeros_like(data)
 
     # Module 1 layer L-1 stage 4 backward
     record = intermediate_tensors1.layers[-1].stage4
@@ -140,7 +131,6 @@ def overlapped_forward_backward(
     intermediate_tensors0.layers[layer_idx0].stage1.args = record.args
     intermediate_tensors0.layers[layer_idx0].stage1.outs = record.outs
     (
-        hidden_states,
         sorted_tokens,
         moe_local_idxs,
         topk_weight,
@@ -167,21 +157,18 @@ def overlapped_forward_backward(
             )
 
             if use_merged:
-                # Merge the stage 5 and stage 1 backward into a single stage.
-                # stage1.outs is at layer -l, stage5.args is at layer -l-1
                 next_layer, prev_layer = module1_layers[-l], module1_layers[-l - 1]
                 stage1_outs = stage1_record.outs
                 stage5_args = intermediate_tensors1.layers[-l - 1].stage5.args
                 if hasattr(next_layer.mlp, "experts"):
                     grad_tensors = (
-                        hidden_states_grad,
                         sorted_tokens_grad,  # noqa: F821
                         topk_weight_grad,
                         residual_grad,
                     )
                 else:
                     grad_tensors = (sorted_tokens_grad, residual_grad)  # noqa: F821
-                moe_outs_grad, topk_weight_grad, hidden_states_grad, residual_grad = (
+                moe_outs_grad, topk_weight_grad, residual_grad = (
                     stage5_and_stage1_b(
                         ctx, next_layer, prev_layer, stage1_outs, stage5_args, grad_tensors
                     )
@@ -193,7 +180,6 @@ def overlapped_forward_backward(
                 record = intermediate_tensors1.layers[-l].stage1
                 if hasattr(module1_layers[-l].mlp, "experts"):
                     grad_tensors = (
-                        hidden_states_grad,
                         sorted_tokens_grad,  # noqa: F821
                         topk_weight_grad,
                         residual_grad,
@@ -203,19 +189,11 @@ def overlapped_forward_backward(
                 hidden_states_grad = stage1_b(ctx, module1_layers[-l], record, grad_tensors)
                 # Module 1 layer L-l-1 stage 5 backward
                 record = intermediate_tensors1.layers[-l - 1].stage5
-                moe_outs_grad, topk_weight_grad, hidden_states_grad, residual_grad = stage5_b(
+                moe_outs_grad, topk_weight_grad, residual_grad = stage5_b(
                     ctx, module1_layers[-l - 1], record, (hidden_states_grad,)
                 )
                 # Clear tensor refs but keep pre-allocated records
                 _clear_layer_records(intermediate_tensors1.layers[-l])
-
-            # Some models do not have shared experts, so the original hidden states weren't used
-            # during the forward pass of stage 5. As a result, its gradients will be None. For
-            # compatibility with the pipeline, we manually set its gradient to zero here.
-            if hidden_states_grad is None:
-                outs = intermediate_tensors1.layers[-l - 1].stage1.outs
-                data = outs.hidden_states if isinstance(outs, Stage1OutsMoe) else outs.sorted_tokens
-                hidden_states_grad = torch.zeros_like(data)
 
             # Module 0 layer l-1 stage 4 forward
             record, moe_outs = stage4_f(
@@ -250,7 +228,6 @@ def overlapped_forward_backward(
                     moe_outs,
                     moe_local_idxs,
                     topk_weight,
-                    hidden_states,
                     residual,
                     position_ids,
                 )
@@ -262,7 +239,6 @@ def overlapped_forward_backward(
                 # stage1.args stays None
                 intermediate_tensors0.layers[layer_idx0].stage1.outs = stage1_outs
                 (
-                    hidden_states,
                     sorted_tokens,
                     moe_local_idxs,
                     topk_weight,
@@ -282,7 +258,6 @@ def overlapped_forward_backward(
                     moe_outs,
                     moe_local_idxs,
                     topk_weight,
-                    hidden_states,
                     residual,
                 )
                 intermediate_tensors0.layers[layer_idx0].stage5.args = record.args
@@ -293,7 +268,6 @@ def overlapped_forward_backward(
                 intermediate_tensors0.layers[layer_idx0].stage1.args = record.args
                 intermediate_tensors0.layers[layer_idx0].stage1.outs = record.outs
                 (
-                    hidden_states,
                     sorted_tokens,
                     moe_local_idxs,
                     topk_weight,
@@ -353,7 +327,7 @@ def overlapped_forward_backward(
     record = intermediate_tensors1.layers[-num_layers].stage1
 
     if hasattr(module1_layers[-num_layers].mlp, "experts"):
-        grad_tensors = (hidden_states_grad, sorted_tokens_grad, topk_weight_grad, residual_grad)
+        grad_tensors = (sorted_tokens_grad, topk_weight_grad, residual_grad)
     else:
         grad_tensors = (sorted_tokens_grad, residual_grad)
 
@@ -369,7 +343,6 @@ def overlapped_forward_backward(
         moe_outs,
         moe_local_idxs,
         topk_weight,
-        hidden_states,
         residual,
     )
     intermediate_tensors0.layers[layer_idx0].stage5.args = record.args

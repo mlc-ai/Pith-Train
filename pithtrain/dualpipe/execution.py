@@ -41,7 +41,6 @@ class Stage1Args(NamedTuple):
 
 
 class Stage1OutsMoe(NamedTuple):
-    hidden_states: torch.Tensor
     sorted_tokens: torch.Tensor
     topk_weight: torch.Tensor
     residual: torch.Tensor
@@ -78,9 +77,7 @@ def stage1_f(
     ctx.comp_stream.record_event(ctx.fwd_event)
 
     if hasattr(layer.mlp, "experts"):
-        record.outs = Stage1OutsMoe(
-            output.hidden_states, output.sorted_tokens, output.topk_weight, output.residual
-        )
+        record.outs = Stage1OutsMoe(output.sorted_tokens, output.topk_weight, output.residual)
     else:
         record.outs = Stage1OutsMlp(output.sorted_tokens, output.residual)
 
@@ -372,7 +369,6 @@ def stage4_b(
 class Stage5Args(NamedTuple):
     moe_outs: torch.Tensor
     topk_weight: torch.Tensor
-    hidden_states: torch.Tensor
     residual: torch.Tensor
 
 
@@ -392,7 +388,6 @@ def stage5_f(
     moe_outs: torch.Tensor,
     moe_local_idxs,
     topk_weight: torch.Tensor,
-    hidden_states: torch.Tensor,
     residual: torch.Tensor,
 ):
     """
@@ -403,16 +398,13 @@ def stage5_f(
 
     moe_outs = moe_outs.detach().requires_grad_()
     topk_weight = topk_weight.detach().requires_grad_() if topk_weight is not None else None
-    hidden_states = hidden_states.detach().requires_grad_()
     residual = residual.detach().requires_grad_()
-    record.args = Stage5Args(moe_outs, topk_weight, hidden_states, residual)
+    record.args = Stage5Args(moe_outs, topk_weight, residual)
 
     if ctx.fwd_comm_work is not None:
         ctx.fwd_comm_work.wait()
 
-    hidden_states = layer.forward_aggregate(
-        moe_outs, moe_local_idxs, topk_weight, hidden_states, residual
-    )
+    hidden_states = layer.forward_aggregate(moe_outs, moe_local_idxs, topk_weight, residual)
     record.outs = Stage5Outs(hidden_states)
 
     nvtx.range_pop()
@@ -434,12 +426,12 @@ def stage5_b(
 
     ctx.comp_stream.record_event(ctx.bwd_event)
 
-    moe_outs_grad, topk_weight_grad, hidden_states_grad, residual_grad = [
+    moe_outs_grad, topk_weight_grad, residual_grad = [
         t.grad if t is not None else None for t in record.args
     ]
 
     nvtx.range_pop()
-    return moe_outs_grad, topk_weight_grad, hidden_states_grad, residual_grad
+    return moe_outs_grad, topk_weight_grad, residual_grad
 
 
 # ------------------------------------------------------------
@@ -454,7 +446,6 @@ def stage5_and_stage1_f(
     moe_outs: torch.Tensor,
     moe_local_idxs,
     topk_weight: torch.Tensor,
-    hidden_states: torch.Tensor,
     residual: torch.Tensor,
     position_ids: torch.Tensor,
 ):
@@ -466,24 +457,21 @@ def stage5_and_stage1_f(
 
     moe_outs = moe_outs.detach().requires_grad_()
     topk_weight = topk_weight.detach().requires_grad_() if topk_weight is not None else None
-    hidden_states = hidden_states.detach().requires_grad_()
     residual = residual.detach().requires_grad_()
-    stage5_args = Stage5Args(moe_outs, topk_weight, hidden_states, residual)
+    stage5_args = Stage5Args(moe_outs, topk_weight, residual)
 
     if ctx.fwd_comm_work is not None:
         ctx.fwd_comm_work.wait()
 
     hidden_states = prev_layer.forward_aggregate(
-        moe_outs, moe_local_idxs, topk_weight, hidden_states, residual
+        moe_outs, moe_local_idxs, topk_weight, residual
     )
 
     output = next_layer.forward_attn(hidden_states, position_ids)
     ctx.comp_stream.record_event(ctx.fwd_event)
 
     if hasattr(next_layer.mlp, "experts"):
-        stage1_outs = Stage1OutsMoe(
-            output.hidden_states, output.sorted_tokens, output.topk_weight, output.residual
-        )
+        stage1_outs = Stage1OutsMoe(output.sorted_tokens, output.topk_weight, output.residual)
     else:
         stage1_outs = Stage1OutsMlp(output.sorted_tokens, output.residual)
 
@@ -512,12 +500,12 @@ def stage5_and_stage1_b(
 
     ctx.comp_stream.record_event(ctx.bwd_event)
 
-    moe_outs_grad, topk_weight_grad, hidden_states_grad, residual_grad = [
+    moe_outs_grad, topk_weight_grad, residual_grad = [
         t.grad if t is not None else None for t in stage5_args
     ]
 
     nvtx.range_pop()
-    return moe_outs_grad, topk_weight_grad, hidden_states_grad, residual_grad
+    return moe_outs_grad, topk_weight_grad, residual_grad
 
 
 # ------------------------------------------------------------
