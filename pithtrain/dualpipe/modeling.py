@@ -101,7 +101,6 @@ def decoder_layer_forward(
 
     output = layer.forward_attn(next_hidden_states, position_ids)
     (
-        hidden_states,
         sorted_tokens,
         moe_local_idxs,
         topk_weight,
@@ -118,9 +117,7 @@ def decoder_layer_forward(
     ep_group = layer.mlp.ep_group if has_experts else None
 
     if has_experts:
-        record.outs = Stage1OutsMoe(
-            output.hidden_states, output.sorted_tokens, output.topk_weight, output.residual
-        )
+        record.outs = Stage1OutsMoe(output.sorted_tokens, output.topk_weight, output.residual)
     else:
         record.outs = Stage1OutsMlp(output.sorted_tokens, output.residual)
     intermediate_tensors.stage1 = record
@@ -178,14 +175,13 @@ def decoder_layer_forward(
     record = Stage5Record()
     moe_outs = moe_outs.detach().requires_grad_()
     topk_weight = topk_weight.detach().requires_grad_() if topk_weight is not None else None
-    hidden_states = hidden_states.detach().requires_grad_()
     residual = residual.detach().requires_grad_()
-    record.args = Stage5Args(moe_outs, topk_weight, hidden_states, residual)
+    record.args = Stage5Args(moe_outs, topk_weight, residual)
 
     if fwd_comm_work is not None:
         fwd_comm_work.wait()
     hidden_states = layer.forward_aggregate(
-        moe_outs, moe_local_idxs, topk_weight, hidden_states, residual
+        moe_outs, moe_local_idxs, topk_weight, residual
     )
 
     record.outs = Stage5Outs(hidden_states)
@@ -236,30 +232,19 @@ def decoder_layer_backward(
         loss.backward()
         loss.detach_()
     elif stage5_was_merged:
-        # Stage5 was merged with next layer's stage1. Get grads from stage5.args.
-        # These were computed when the next layer ran its merged stage1 backward.
         nvtx.range_push("layer%02d.stage5_merged_skip" % layer.idx)
-        moe_outs_grad, topk_weight_grad, hidden_states_grad, residual_grad = [
+        moe_outs_grad, topk_weight_grad, residual_grad = [
             t.grad if t is not None else None for t in stage5_record.args
         ]
         nvtx.range_pop()
     else:
-        # Normal case: run stage5 backward
         nvtx.range_push("layer%02d.stage5_b" % layer.idx)
         record = stage5_record
         run_backward(record.outs, dy)
-        moe_outs_grad, topk_weight_grad, hidden_states_grad, residual_grad = [
+        moe_outs_grad, topk_weight_grad, residual_grad = [
             t.grad if t is not None else None for t in record.args
         ]
         nvtx.range_pop()
-
-    # Some models do not have shared experts, so the original hidden states weren't used
-    # during the forward pass of stage 5. As a result, its gradients will be None. For
-    # compatibility with the pipeline, we manually set its gradient to zero here.
-    if hidden_states_grad is None:
-        outs = stage1_record.outs
-        data = outs.hidden_states if isinstance(outs, Stage1OutsMoe) else outs.sorted_tokens
-        hidden_states_grad = torch.zeros_like(data)
 
     # Stage 4.
     nvtx.range_push("layer%02d.stage4_b" % layer.idx)
@@ -305,7 +290,7 @@ def decoder_layer_backward(
         bwd_comm_work.wait()
 
     if hasattr(layer.mlp, "experts"):
-        grad_tensors = (hidden_states_grad, sorted_tokens_grad, topk_weight_grad, residual_grad)
+        grad_tensors = (sorted_tokens_grad, topk_weight_grad, residual_grad)
     else:
         grad_tensors = (sorted_tokens_grad, residual_grad)
 

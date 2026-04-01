@@ -520,6 +520,9 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
 
+        if hasattr(self.mlp, "shared_experts"):
+            residual = residual + self.mlp.shared_experts(hidden_states)
+
         return hidden_states, residual
 
     def forward_attn(
@@ -532,9 +535,7 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
 
         assert isinstance(self.mlp, (DeepseekV2LiteMLP, DeepseekV2LiteMoEWithGroupGeMM))
         if isinstance(self.mlp, DeepseekV2LiteMLP):
-            # The MLP is not MoE, so we don't need to do expert selection
             return ForwardAttnOutput(
-                hidden_states,
                 hidden_states,  # sorted_tokens
                 None,  # idxs
                 None,  # topk_weight
@@ -563,7 +564,6 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
             self.mlp.ep_group,
         )
         return ForwardAttnOutput(
-            hidden_states,
             sorted_tokens,
             idxs,
             topk_weight,
@@ -603,10 +603,12 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
         moe_outs: torch.Tensor,
         moe_local_idxs: Optional[torch.Tensor],
         topk_weight: Optional[torch.Tensor],
-        moe_input_hidden_states: torch.Tensor,
         residual: torch.Tensor,
     ):
-        """Computation after all-to-all combine"""
+        """
+        Weighted expert output + residual connection.
+        Shared expert output is already folded into residual by forward_attn.
+        """
 
         def moe_finalize(moe_outs, moe_local_idxs, topk_weight) -> torch.Tensor:
             if self.mlp.ep_size > 1:
@@ -624,13 +626,9 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
             return final_out
 
         if isinstance(self.mlp, DeepseekV2LiteMoEWithGroupGeMM):
-            moe_y = moe_finalize(moe_outs, moe_local_idxs, topk_weight).view(
-                *moe_input_hidden_states.shape
+            hidden_states = moe_finalize(moe_outs, moe_local_idxs, topk_weight).view(
+                *residual.shape
             )
-            if self.mlp.config.n_shared_experts is not None:
-                moe_y = moe_y + self.mlp.shared_experts(moe_input_hidden_states)
-
-            hidden_states = moe_y
         else:
             assert moe_local_idxs is None
             assert topk_weight is None

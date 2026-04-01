@@ -546,8 +546,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
 
         if isinstance(self.mlp, Qwen3MoeMLP):
             return ForwardAttnOutput(
-                hidden_states,
-                hidden_states,
+                hidden_states,  # sorted_tokens
                 None,
                 None,
                 None,
@@ -576,7 +575,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
         )
 
         return ForwardAttnOutput(
-            hidden_states,
             sorted_tokens,
             idxs,
             topk_weight,
@@ -618,7 +616,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
         moe_outs: torch.Tensor,
         moe_local_idxs: Optional[torch.Tensor],
         topk_weight: Optional[torch.Tensor],
-        moe_input_hidden_states: torch.Tensor,
         residual: torch.Tensor,
     ) -> torch.Tensor:
         """
@@ -638,7 +635,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
                 .sum(dim=1)
                 .to(new_x.dtype)
             )
-            hidden_states = final_out.view(*moe_input_hidden_states.shape)
+            hidden_states = final_out.view(*residual.shape)
         else:
             assert moe_local_idxs is None
             assert topk_weight is None
