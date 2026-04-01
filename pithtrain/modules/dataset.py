@@ -36,6 +36,15 @@ class MemmapDataset:
         labels = torch.tensor(self.tokens[start + 1 : end + 1])
         return tokens, labels
 
+    def get_chunk(
+        self, idx: int, seq_offset: int, seq_length: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Read a sub-range of a sequence, avoiding unnecessary mmap page faults."""
+        start = idx * self.sequence_length + seq_offset
+        tokens = torch.tensor(self.tokens[start : start + seq_length])
+        labels = torch.tensor(self.tokens[start + 1 : start + seq_length + 1])
+        return tokens, labels
+
 
 class ConcatDataset:
     """
@@ -74,3 +83,10 @@ class ConcatDataset:
         x = np.searchsorted(self.offsets, p, side="right")
         y = p if x == 0 else p - self.offsets[x - 1]
         return self.memmap_datasets[x][y]
+
+    def get_chunk(self, idx: int, seq_offset: int, seq_length: int):
+        """Read a sub-range of a sequence by index, delegating to the underlying dataset."""
+        p = self.indices[idx]
+        x = np.searchsorted(self.offsets, p, side="right")
+        y = p if x == 0 else p - self.offsets[x - 1]
+        return self.memmap_datasets[x].get_chunk(y, seq_offset, seq_length)

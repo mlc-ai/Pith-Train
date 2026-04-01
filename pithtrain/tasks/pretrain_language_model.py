@@ -111,26 +111,32 @@ def get_global_batch(
     local_batch_size = global_batch_size // (dp_size * ep_size)
     start0 = step * global_batch_size + (dp_rank * ep_size + ep_rank) * micro_batch_size
 
+    # Compute the CP sub-range so we only read the needed tokens from mmap.
+    cp_size = ctx.distributed.cp_size
+    if cp_size > 1:
+        cp_rank = ctx.distributed.cp_rank
+        local_seq_len = sequence_length // cp_size
+        seq_offset = cp_rank * local_seq_len
+    else:
+        local_seq_len = sequence_length
+        seq_offset = 0
+
     # single allocation on host, then one HtoD transfer per tensor
-    local_tokens = torch.empty((local_batch_size, sequence_length), dtype=torch.long)
-    local_labels = torch.empty((local_batch_size, sequence_length), dtype=torch.long)
+    local_tokens = torch.empty((local_batch_size, local_seq_len), dtype=torch.long)
+    local_labels = torch.empty((local_batch_size, local_seq_len), dtype=torch.long)
 
     # fill in one pass: k iterates over our rank-local batch rows
     for k in range(local_batch_size):
         acc, off = divmod(k, micro_batch_size)
         index = start0 + acc * effective_batch_size + off
-        tokens, labels = dataset[index]
+        if seq_offset == 0 and local_seq_len == sequence_length:
+            tokens, labels = dataset[index]
+        else:
+            tokens, labels = dataset.get_chunk(index, seq_offset, local_seq_len)
         local_tokens[k], local_labels[k] = tokens, labels
 
     local_tokens = local_tokens.to(device, non_blocking=True)
     local_labels = local_labels.to(device, non_blocking=True)
-
-    cp_size = ctx.distributed.cp_size
-    if cp_size > 1:
-        cp_rank = ctx.distributed.cp_rank
-        chunk = sequence_length // cp_size
-        local_tokens = local_tokens[:, cp_rank * chunk : (cp_rank + 1) * chunk]
-        local_labels = local_labels[:, cp_rank * chunk : (cp_rank + 1) * chunk]
 
     return local_tokens, local_labels
 
