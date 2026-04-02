@@ -632,13 +632,13 @@ class Qwen3MoeDecoderLayer(nn.Module):
                 weighted = (moe_outs.float() * permuted_probs.unsqueeze(-1)).to(moe_outs.dtype)
                 hidden_states = moe_outs.new_zeros(seq_len, moe_outs.shape[-1])
                 hidden_states.scatter_add_(0, token_indices[:, None].expand_as(weighted), weighted)
-                hidden_states = hidden_states.view(*moe_input_hidden_states.shape)
+                hidden_states = hidden_states.view(*residual.shape)
             else:
                 assert moe_local_idxs is None
                 new_x = moe_outs
                 final_out = new_x.view(*topk_weight.shape, -1) * topk_weight.unsqueeze(dim=-1)
                 final_out = final_out.sum(dim=1).to(new_x.dtype)
-                hidden_states = final_out.view(*moe_input_hidden_states.shape)
+                hidden_states = final_out.view(*residual.shape)
         else:
             assert moe_local_idxs is None
             assert topk_weight is None
