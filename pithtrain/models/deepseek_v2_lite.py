@@ -30,8 +30,8 @@ from pithtrain.models.interface import ForwardAttnOutput
 from pithtrain.modules.load_balance import MoELoadBalanceLossInjector, MoELoadBalanceLossTracker
 from pithtrain.operators.ep_dispatch import moe_ep_prepare_dispatch
 from pithtrain.operators.flash_attn_v4 import mla_flash_attn_func
-from pithtrain.operators.token_scatter import precompute_group_indices, scatter_for_grouped_gemm
 from pithtrain.operators.ring_attention.standard import ring_attention_func
+from pithtrain.operators.token_scatter import precompute_group_indices, scatter_for_grouped_gemm
 
 torch._dynamo.allow_in_graph(MoELoadBalanceLossInjector)
 
@@ -456,7 +456,11 @@ class DeepseekV2LiteAttention(nn.Module):
             )
         else:
             attn_output = mla_flash_attn_func(
-                q_nope, q_pe, k_nope, k_pe, value_states,
+                q_nope,
+                q_pe,
+                k_nope,
+                k_pe,
+                value_states,
                 softmax_scale=self.softmax_scale,
                 qk_nope_head_dim=self.qk_nope_head_dim,
                 causal=True,

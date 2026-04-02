@@ -168,10 +168,8 @@ def overlapped_forward_backward(
                     )
                 else:
                     grad_tensors = (sorted_tokens_grad, residual_grad)  # noqa: F821
-                moe_outs_grad, topk_weight_grad, residual_grad = (
-                    stage5_and_stage1_b(
-                        ctx, next_layer, prev_layer, stage1_outs, stage5_args, grad_tensors
-                    )
+                moe_outs_grad, topk_weight_grad, residual_grad = stage5_and_stage1_b(
+                    ctx, next_layer, prev_layer, stage1_outs, stage5_args, grad_tensors
                 )
                 # Clear tensor refs but keep pre-allocated records
                 _clear_layer_records(intermediate_tensors1.layers[-l])
