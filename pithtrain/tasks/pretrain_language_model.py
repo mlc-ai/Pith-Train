@@ -127,10 +127,8 @@ def get_global_batch(
     for k in range(local_batch_size):
         acc, off = divmod(k, micro_batch_size)
         index = start0 + acc * effective_batch_size + off
-        if seq_offset == 0 and local_seq_len == sequence_length:
-            tokens, labels = dataset[index]
-        else:
-            tokens, labels = dataset.get_chunk(index, seq_offset, local_seq_len)
+        # get_chunk reads smaller chunk of the sequence if cp_size > 1
+        tokens, labels = dataset.get_chunk(index, seq_offset, local_seq_len)
         local_tokens[k], local_labels[k] = tokens, labels
 
     local_tokens = local_tokens.to(device, non_blocking=True)
