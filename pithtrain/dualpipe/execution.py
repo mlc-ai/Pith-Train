@@ -463,9 +463,7 @@ def stage5_and_stage1_f(
     if ctx.fwd_comm_work is not None:
         ctx.fwd_comm_work.wait()
 
-    hidden_states = prev_layer.forward_aggregate(
-        moe_outs, moe_local_idxs, topk_weight, residual
-    )
+    hidden_states = prev_layer.forward_aggregate(moe_outs, moe_local_idxs, topk_weight, residual)
 
     output = next_layer.forward_attn(hidden_states, position_ids)
     ctx.comp_stream.record_event(ctx.fwd_event)

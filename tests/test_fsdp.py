@@ -163,7 +163,6 @@ def main(ctx: DistributedCtx, model_name: str):
 
     config_path = Path(__file__).resolve().parent.parent / model_name
     config = AutoConfig.from_pretrained(config_path)
-    B, S = micro_batch_size, sequence_length
 
     if config.model_type == "deepseek_v2":
         ModelClass = DeepseekV2LiteModel

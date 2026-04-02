@@ -180,9 +180,7 @@ def decoder_layer_forward(
 
     if fwd_comm_work is not None:
         fwd_comm_work.wait()
-    hidden_states = layer.forward_aggregate(
-        moe_outs, moe_local_idxs, topk_weight, residual
-    )
+    hidden_states = layer.forward_aggregate(moe_outs, moe_local_idxs, topk_weight, residual)
 
     record.outs = Stage5Outs(hidden_states)
     intermediate_tensors.stage5 = record
