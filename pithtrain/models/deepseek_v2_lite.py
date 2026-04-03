@@ -170,12 +170,9 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 
-# Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
-def apply_rotary_pos_emb(
-    q, k, cos, sin, position_ids, unsqueeze_dim=1
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1) -> Tuple[torch.Tensor, torch.Tensor]:
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
 
     b, h, s, d = q.shape
     q = q.view(b, h, s, d // 2, 2).transpose(4, 3).reshape(b, h, s, d)
@@ -361,13 +358,6 @@ class DeepseekV2LiteAttention(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
-        self.max_position_embeddings = config.max_position_embeddings
-        rope_theta = getattr(config, "rope_theta", None) or (config.rope_scaling or {}).get(
-            "rope_theta"
-        )
-        if rope_theta is None:
-            raise ValueError("rope_theta not found in config or config.rope_scaling")
-        self.rope_theta = rope_theta
         self.qk_rope_head_dim = config.qk_rope_head_dim
         self.kv_lora_rank = config.kv_lora_rank
         self.v_head_dim = config.v_head_dim
@@ -393,34 +383,12 @@ class DeepseekV2LiteAttention(nn.Module):
         )
 
         self.o_proj = LinearCls(self.num_heads * self.v_head_dim, self.hidden_size, bias=False)
-        self._init_rope()
         self.softmax_scale = self.q_head_dim ** (-0.5)
-
-    def _init_rope(self):
-        scaling_factor = self.config.rope_scaling["factor"]
-        kwargs = {
-            key: self.config.rope_scaling[key]
-            for key in [
-                "original_max_position_embeddings",
-                "beta_fast",
-                "beta_slow",
-                "mscale",
-                "mscale_all_dim",
-            ]
-            if key in self.config.rope_scaling
-        }
-        self.rotary_emb = DeepseekV2LiteYarnRotaryEmbedding(
-            self.qk_rope_head_dim,
-            max_position_embeddings=self.max_position_embeddings,
-            scaling_factor=scaling_factor,
-            base=self.rope_theta,
-            **kwargs,
-        )
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor] = None,
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
 
@@ -438,11 +406,8 @@ class DeepseekV2LiteAttention(nn.Module):
         )
 
         k_nope, value_states = torch.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
-        rope_seq_len = (
-            position_ids.max().item() + 1 if position_ids is not None else value_states.shape[1]
-        )
-        cos, sin = self.rotary_emb(value_states, seq_len=rope_seq_len)
-        q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids, unsqueeze_dim=2)
+        cos, sin = position_embeddings
+        q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, unsqueeze_dim=2)
 
         if self.use_ring_attn and not self._disable_ring_attn:
             query_states = torch.cat([q_nope, q_pe], dim=-1)
@@ -507,14 +472,17 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
     def _forward_attn_compute(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor],
     ):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        # Self Attention
+
+        position_embeddings = getattr(self, "_position_embeddings", None)
+        if position_embeddings is None:
+            raise RuntimeError("Position embeddings must be set before calling forward_attn")
+
         hidden_states = self.self_attn(
             hidden_states=hidden_states,
-            position_ids=position_ids,
+            position_embeddings=position_embeddings,
         )
         hidden_states = residual + hidden_states
         # Fully Connected
@@ -529,10 +497,9 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
     def forward_attn(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ):
         """LN + Attn + LN + Expert selection"""
-        hidden_states, residual = self._forward_attn_compute(hidden_states, position_ids)
+        hidden_states, residual = self._forward_attn_compute(hidden_states)
 
         assert isinstance(self.mlp, (DeepseekV2LiteMLP, DeepseekV2LiteMoEWithGroupGeMM))
         if isinstance(self.mlp, DeepseekV2LiteMLP):
@@ -645,17 +612,20 @@ class DeepseekV2LiteDecoderLayer(nn.Module):
     def reference_forward(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ):
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
 
+        position_embeddings = getattr(self, "_position_embeddings", None)
+        if position_embeddings is None:
+            raise RuntimeError("Position embeddings must be set before calling reference_forward")
+
         self.self_attn._disable_ring_attn = True
         try:
             hidden_states = self.self_attn(
                 hidden_states=hidden_states,
-                position_ids=position_ids,
+                position_embeddings=position_embeddings,
             )
         finally:
             self.self_attn._disable_ring_attn = False
@@ -718,10 +688,32 @@ class DeepseekV2LiteModel(nn.Module):
             self.norm = None
             self.lm_head = None
 
+        scaling_factor = config.rope_scaling["factor"]
+        rope_kwargs = {
+            key: config.rope_scaling[key]
+            for key in [
+                "original_max_position_embeddings",
+                "beta_fast",
+                "beta_slow",
+                "mscale",
+                "mscale_all_dim",
+            ]
+            if key in config.rope_scaling
+        }
+        rope_theta = getattr(config, "rope_theta", None) or (config.rope_scaling or {}).get(
+            "rope_theta"
+        )
+        self.rotary_emb = DeepseekV2LiteYarnRotaryEmbedding(
+            config.qk_rope_head_dim,
+            max_position_embeddings=config.max_position_embeddings,
+            scaling_factor=scaling_factor,
+            base=rope_theta,
+            **rope_kwargs,
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ):
         # Get pre-allocated intermediate_tensors from module attribute (set by DualPipeV)
         intermediate_tensors: Optional[IntermediateTensors] = getattr(
@@ -732,14 +724,20 @@ class DeepseekV2LiteModel(nn.Module):
             # Reference forward mode
             if self.embed_tokens is not None:
                 hidden_states = self.embed_tokens(hidden_states)
-            if position_ids is None:
-                seq_len = hidden_states.shape[1]
-                offset = self.cp_rank * seq_len
-                position_ids = torch.arange(
-                    offset, offset + seq_len, device=hidden_states.device
-                ).unsqueeze(0)
+            seq_len = hidden_states.shape[1]
+            offset = self.cp_rank * seq_len
+            position_ids = torch.arange(
+                offset, offset + seq_len, device=hidden_states.device
+            ).unsqueeze(0)
+            cos, sin = self.rotary_emb(hidden_states, seq_len=offset + seq_len)
+            position_embeddings = (
+                cos[position_ids].to(dtype=hidden_states.dtype),
+                sin[position_ids].to(dtype=hidden_states.dtype),
+            )
             for _, layer in self.layers.items():
-                ret = decoder_layer_forward(layer, hidden_states, position_ids)
+                layer._position_embeddings = position_embeddings
+            for _, layer in self.layers.items():
+                ret = decoder_layer_forward(layer, hidden_states)
                 hidden_states = ret[0] if isinstance(ret, tuple) else ret
             if self.norm is not None:
                 hidden_states = self.norm(hidden_states)
@@ -753,15 +751,21 @@ class DeepseekV2LiteModel(nn.Module):
             hidden_states = self.embed_tokens(hidden_states)
             intermediate_tensors.prolog.outs = PrologOuts(hidden_states)
 
-        if position_ids is None:
-            seq_len = hidden_states.shape[1]
-            offset = self.cp_rank * seq_len
-            position_ids = torch.arange(
-                offset, offset + seq_len, device=hidden_states.device
-            ).unsqueeze(0)
+        seq_len = hidden_states.shape[1]
+        offset = self.cp_rank * seq_len
+        position_ids = torch.arange(
+            offset, offset + seq_len, device=hidden_states.device
+        ).unsqueeze(0)
+        cos, sin = self.rotary_emb(hidden_states, seq_len=offset + seq_len)
+        position_embeddings = (
+            cos[position_ids].to(dtype=hidden_states.dtype),
+            sin[position_ids].to(dtype=hidden_states.dtype),
+        )
+        for _, layer in self.layers.items():
+            layer._position_embeddings = position_embeddings
 
         for _, layer in self.layers.items():
-            ret = decoder_layer_forward(layer, hidden_states, position_ids)
+            ret = decoder_layer_forward(layer, hidden_states)
             if len(ret) == 2:
                 hidden_states, layer_record = ret
                 # Copy into pre-allocated slot

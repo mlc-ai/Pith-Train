@@ -61,7 +61,6 @@ def stage1_f(
     ctx: ExecutionCtx,
     layer: DecoderLayerProtocol,
     hidden_states: torch.Tensor,
-    position_ids: torch.Tensor,
 ):
     """
     Stage1 forward.
@@ -73,7 +72,7 @@ def stage1_f(
     next_hidden_states = hidden_states.detach().requires_grad_()
     record.args = Stage1Args(prev_hidden_states, next_hidden_states)
 
-    output = layer.forward_attn(next_hidden_states, position_ids)
+    output = layer.forward_attn(next_hidden_states)
     ctx.comp_stream.record_event(ctx.fwd_event)
 
     if hasattr(layer.mlp, "experts"):
@@ -447,7 +446,6 @@ def stage5_and_stage1_f(
     moe_local_idxs,
     topk_weight: torch.Tensor,
     residual: torch.Tensor,
-    position_ids: torch.Tensor,
 ):
     """
     Merged Stage5 and Stage1 forward.
@@ -465,7 +463,7 @@ def stage5_and_stage1_f(
 
     hidden_states = prev_layer.forward_aggregate(moe_outs, moe_local_idxs, topk_weight, residual)
 
-    output = next_layer.forward_attn(hidden_states, position_ids)
+    output = next_layer.forward_attn(hidden_states)
     ctx.comp_stream.record_event(ctx.fwd_event)
 
     if hasattr(next_layer.mlp, "experts"):

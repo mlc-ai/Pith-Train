@@ -87,7 +87,6 @@ def overlapped_forward_backward(
     module1_layers = [layer for _, layer in module1.layers.items()]
 
     (hidden_states,) = inputs0
-    position_ids = const_inputs0[0] if len(const_inputs0) > 0 else None
     # intermediate_tensors0 is pre-allocated and passed in
     layer_idx0 = 0  # Index into intermediate_tensors0.layers
 
@@ -127,7 +126,7 @@ def overlapped_forward_backward(
         intermediate_tensors0.prolog.args = record.args
         intermediate_tensors0.prolog.outs = record.outs
 
-    record, output = stage1_f(ctx, module0_layers[0], hidden_states, position_ids)
+    record, output = stage1_f(ctx, module0_layers[0], hidden_states)
     intermediate_tensors0.layers[layer_idx0].stage1.args = record.args
     intermediate_tensors0.layers[layer_idx0].stage1.outs = record.outs
     (
@@ -227,7 +226,6 @@ def overlapped_forward_backward(
                     moe_local_idxs,
                     topk_weight,
                     residual,
-                    position_ids,
                 )
                 # Store stage5.args at prev layer (no outs -> merged indicator)
                 intermediate_tensors0.layers[layer_idx0].stage5.args = stage5_args
@@ -262,7 +260,7 @@ def overlapped_forward_backward(
                 intermediate_tensors0.layers[layer_idx0].stage5.outs = record.outs
                 layer_idx0 += 1
                 # Module 0 layer l stage 1 forward
-                record, output = stage1_f(ctx, module0_layers[l], hidden_states, position_ids)
+                record, output = stage1_f(ctx, module0_layers[l], hidden_states)
                 intermediate_tensors0.layers[layer_idx0].stage1.args = record.args
                 intermediate_tensors0.layers[layer_idx0].stage1.outs = record.outs
                 (
@@ -349,9 +347,7 @@ def overlapped_forward_backward(
 
     if len(module0.layers) == len(module1.layers) + 1:
         # There is an extra layer in module0 for forward
-        hidden_states, extra_layer = decoder_layer_forward(
-            module0_layers[-1], hidden_states, position_ids
-        )
+        hidden_states, extra_layer = decoder_layer_forward(module0_layers[-1], hidden_states)
         # Copy into pre-allocated slot
         _copy_layer_records(extra_layer, intermediate_tensors0.layers[layer_idx0])
         layer_idx0 += 1

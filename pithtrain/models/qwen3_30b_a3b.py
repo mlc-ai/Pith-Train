@@ -516,7 +516,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
     def _forward_attn_compute(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor],
     ):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
@@ -539,10 +538,9 @@ class Qwen3MoeDecoderLayer(nn.Module):
     def forward_attn(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ) -> ForwardAttnOutput:
         """LN + Attn + LN + Expert selection."""
-        hidden_states, residual = self._forward_attn_compute(hidden_states, position_ids)
+        hidden_states, residual = self._forward_attn_compute(hidden_states)
 
         if isinstance(self.mlp, Qwen3MoeMLP):
             return ForwardAttnOutput(
@@ -650,7 +648,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
     def reference_forward(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
         Reference forward implementation for correctness validation.
@@ -773,7 +770,6 @@ class Qwen3MoeModel(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass for the model.
@@ -783,8 +779,6 @@ class Qwen3MoeModel(nn.Module):
         hidden_states : torch.Tensor
             Input tensor. If stage_id == 0, this should be input_ids.
             Otherwise, it should be hidden states from the previous stage.
-        position_ids : Optional[torch.LongTensor]
-            Position indices.
 
         Returns
         -------
@@ -801,11 +795,10 @@ class Qwen3MoeModel(nn.Module):
 
         bsz, seq_len, _ = hidden_states.shape
 
-        if position_ids is None:
-            offset = self.cp_rank * seq_len
-            position_ids = torch.arange(
-                offset, offset + seq_len, device=hidden_states.device
-            ).unsqueeze(0)
+        offset = self.cp_rank * seq_len
+        position_ids = torch.arange(
+            offset, offset + seq_len, device=hidden_states.device
+        ).unsqueeze(0)
 
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
@@ -816,7 +809,7 @@ class Qwen3MoeModel(nn.Module):
             if self.embed_tokens is not None:
                 pass
             for _, layer in self.layers.items():
-                ret = decoder_layer_forward(layer, hidden_states, position_ids)
+                ret = decoder_layer_forward(layer, hidden_states)
                 hidden_states = ret[0] if isinstance(ret, tuple) else ret
             if self.norm is not None:
                 hidden_states = self.norm(hidden_states)
@@ -829,7 +822,7 @@ class Qwen3MoeModel(nn.Module):
             intermediate_tensors.prolog.outs = PrologOuts(hidden_states)
 
         for _, layer in self.layers.items():
-            ret = decoder_layer_forward(layer, hidden_states, position_ids)
+            ret = decoder_layer_forward(layer, hidden_states)
             if len(ret) == 2:
                 hidden_states, layer_record = ret
                 dst = intermediate_tensors.layers[layer_idx]

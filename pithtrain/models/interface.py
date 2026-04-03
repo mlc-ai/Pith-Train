@@ -43,7 +43,6 @@ class DecoderLayerProtocol(Protocol):
     def reference_forward(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
         Reference forward implementation for correctness validation.
@@ -52,7 +51,6 @@ class DecoderLayerProtocol(Protocol):
     def forward_attn(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ) -> ForwardAttnOutput:
         """
         LN + Attn + LN + Expert selection.
