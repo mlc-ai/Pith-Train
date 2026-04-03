@@ -70,31 +70,29 @@ class Qwen3MoeRotaryEmbedding(nn.Module):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(
-        self, x: torch.Tensor, position_ids: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Return cos and sin for the given position ids.
+        Return the cos/sin cache up to ``seq_len`` positions.
 
         Parameters
         ----------
         x : torch.Tensor
             Input tensor, used only for dtype.
-        position_ids : torch.Tensor
-            Position indices of shape [batch_size, seq_len].
+        seq_len : int
+            Required cache length (global, i.e. includes CP offset).
 
         Returns
         -------
         Tuple[torch.Tensor, torch.Tensor]
-            Cosine and sine embeddings.
+            Cosine and sine tables of shape ``[seq_len, head_dim]``.
         """
-        seq_len = position_ids.max().item() + 1
         if seq_len > self.max_seq_len_cached:
             self._set_cos_sin_cache(seq_len, x.device, x.dtype)
 
-        cos = self.cos_cached[position_ids].to(dtype=x.dtype)
-        sin = self.sin_cached[position_ids].to(dtype=x.dtype)
-        return cos, sin
+        return (
+            self.cos_cached[:seq_len].to(dtype=x.dtype),
+            self.sin_cached[:seq_len].to(dtype=x.dtype),
+        )
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -516,7 +514,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
     def _forward_attn_compute(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor],
     ):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
@@ -539,10 +536,9 @@ class Qwen3MoeDecoderLayer(nn.Module):
     def forward_attn(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ) -> ForwardAttnOutput:
         """LN + Attn + LN + Expert selection."""
-        hidden_states, residual = self._forward_attn_compute(hidden_states, position_ids)
+        hidden_states, residual = self._forward_attn_compute(hidden_states)
 
         if isinstance(self.mlp, Qwen3MoeMLP):
             return ForwardAttnOutput(
@@ -650,7 +646,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
     def reference_forward(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
         Reference forward implementation for correctness validation.
@@ -773,7 +768,6 @@ class Qwen3MoeModel(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass for the model.
@@ -783,8 +777,6 @@ class Qwen3MoeModel(nn.Module):
         hidden_states : torch.Tensor
             Input tensor. If stage_id == 0, this should be input_ids.
             Otherwise, it should be hidden states from the previous stage.
-        position_ids : Optional[torch.LongTensor]
-            Position indices.
 
         Returns
         -------
@@ -801,13 +793,12 @@ class Qwen3MoeModel(nn.Module):
 
         bsz, seq_len, _ = hidden_states.shape
 
-        if position_ids is None:
-            offset = self.cp_rank * seq_len
-            position_ids = torch.arange(
-                offset, offset + seq_len, device=hidden_states.device
-            ).unsqueeze(0)
-
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        offset = self.cp_rank * seq_len
+        cos, sin = self.rotary_emb(hidden_states, seq_len=offset + seq_len)
+        position_embeddings = (
+            cos[offset : offset + seq_len].unsqueeze(0),
+            sin[offset : offset + seq_len].unsqueeze(0),
+        )
 
         for layer_idx_str, layer in self.layers.items():
             layer._position_embeddings = position_embeddings
@@ -816,7 +807,7 @@ class Qwen3MoeModel(nn.Module):
             if self.embed_tokens is not None:
                 pass
             for _, layer in self.layers.items():
-                ret = decoder_layer_forward(layer, hidden_states, position_ids)
+                ret = decoder_layer_forward(layer, hidden_states)
                 hidden_states = ret[0] if isinstance(ret, tuple) else ret
             if self.norm is not None:
                 hidden_states = self.norm(hidden_states)
@@ -829,7 +820,7 @@ class Qwen3MoeModel(nn.Module):
             intermediate_tensors.prolog.outs = PrologOuts(hidden_states)
 
         for _, layer in self.layers.items():
-            ret = decoder_layer_forward(layer, hidden_states, position_ids)
+            ret = decoder_layer_forward(layer, hidden_states)
             if len(ret) == 2:
                 hidden_states, layer_record = ret
                 dst = intermediate_tensors.layers[layer_idx]

@@ -261,7 +261,6 @@ def main(ctx: DistributedCtx, model_name: str):
     kwargs = dict()
     kwargs["pp_group"] = pp_group
     kwargs["ep_group"] = ep_group
-    kwargs["const_inputs"] = ()
     dualpipev_model = DualPipeV(local_modules, **kwargs)
 
     # Run the DualPipeV step.

@@ -78,7 +78,6 @@ def decoder_layer_forward_combine(
 def decoder_layer_forward(
     layer: DecoderLayerProtocol,
     hidden_states: torch.Tensor,
-    position_ids: Optional[torch.LongTensor] = None,
 ):
     """
     Forward pass for a DualPipeV decoder layer.
@@ -86,7 +85,7 @@ def decoder_layer_forward(
 
     if ModelImplMode.use_reference_fwd:
         return (
-            layer.reference_forward(hidden_states, position_ids),
+            layer.reference_forward(hidden_states),
             [],
         )
 
@@ -99,7 +98,7 @@ def decoder_layer_forward(
     next_hidden_states = hidden_states.detach().requires_grad_()
     record.args = Stage1Args(prev_hidden_states, next_hidden_states)
 
-    output = layer.forward_attn(next_hidden_states, position_ids)
+    output = layer.forward_attn(next_hidden_states)
     (
         sorted_tokens,
         moe_local_idxs,

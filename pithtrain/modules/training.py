@@ -354,7 +354,7 @@ def setup_model(cfg: TrainingCfg, ctx: TrainingCtx, distributed: DistributedCtx)
                     if cp_group is not None:
                         gate.compute = gate.compute.__wrapped__.__get__(gate, type(gate))
 
-    ctx.model = DualPipeV(modules, const_inputs=(), pp_group=pp_group, ep_group=ep_group)
+    ctx.model = DualPipeV(modules, pp_group=pp_group, ep_group=ep_group)
     set_p2p_tensor_shapes([(micro_batch_size, local_seq_len, hidden_size)])
     set_p2p_tensor_dtype(torch.bfloat16)
 

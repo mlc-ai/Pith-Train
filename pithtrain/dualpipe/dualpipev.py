@@ -60,7 +60,6 @@ class DualPipeV(nn.Module):
     def __init__(
         self,
         modules: Tuple[nn.Module, nn.Module],
-        const_inputs: Tuple[torch.Tensor, ...],
         pp_group: dist.ProcessGroup,
         ep_group: dist.ProcessGroup,
     ) -> None:
@@ -70,7 +69,6 @@ class DualPipeV(nn.Module):
         assert next(modules[0].parameters()).device == device
         self.module = nn.ModuleList(modules)
         self.batch_dim = 0
-        self.const_inputs = const_inputs
         self.rank = torch.distributed.get_rank()
 
         self.pp_group = pp_group
@@ -158,7 +156,7 @@ class DualPipeV(nn.Module):
         # Set pre-allocated intermediate_tensors on module to avoid FSDP kwarg handling issues
         intermediate_tensors = self.intermediate_tensors_chunks[phase][chunk_id]
         self.module[phase]._intermediate_tensors = intermediate_tensors
-        outputs = self.module[phase](*inputs, *self.const_inputs)
+        outputs = self.module[phase](*inputs)
         self.module[phase]._intermediate_tensors = None
         outputs = [outputs] if isinstance(outputs, torch.Tensor) else outputs
         if is_last_stage and self.criterion is not None:
@@ -267,7 +265,6 @@ class DualPipeV(nn.Module):
         outputs0, loss0, input_grads1 = overlapped_forward_backward(
             module0,
             inputs0,
-            self.const_inputs,
             criterion0,
             labels0,
             self.intermediate_tensors_chunks[phase0][chunk_id0],
