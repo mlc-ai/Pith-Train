@@ -95,14 +95,20 @@ class TrainingCfg(SlottedDefault):
     (e.g. ``"examples/.../qwen3_30b_a3b_config.json"``).
     """
 
-    save_interval: int
+    save_interval: Optional[int] = None
     """
-    The interval (in steps) at which to save model checkpoints.
+    The interval (in steps) at which to save checkpoints. When None,
+    checkpoint saving is disabled but loading still occurs from
+    ``save_location`` (if set). This is useful for validation runs
+    that need to load a pretrained checkpoint without writing new ones.
     """
 
-    save_location: Path
+    save_location: Optional[Path] = None
     """
-    The directory where model checkpoints will be saved.
+    The directory for checkpoint storage. Checkpoints are loaded from
+    and saved to ``<save_location>/torch-dcp/step-XXXXXXXX``. When
+    None, both loading and saving are disabled and the model trains
+    from scratch.
     """
 
     moe_load_balance_coef: float = 0.0
