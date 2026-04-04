@@ -22,7 +22,6 @@ uv.lock
 /venv_cmd.sh
 
 # IDEs and editors
-.claude/
 .vscode/
 .idea/
 *.swp
