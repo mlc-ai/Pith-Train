@@ -12,7 +12,7 @@ PithTrain is built to be understood — by humans and AI agents alike. At ~10K l
 
 ## Installation
 
-Hopper (SM90) or Blackwell (SM100) GPUs are required. CUDA 13.0 and Python >= 3.12 are required. We use [uv](https://docs.astral.sh/uv/) to manage project dependencies.
+NVIDIA Hopper (SM90) or Blackwell (SM100) GPUs are required. CUDA 13.0 and Python >= 3.12 are required. We use [uv](https://docs.astral.sh/uv/) to manage project dependencies.
 
 ```bash
 git clone https://github.com/mlc-ai/Pith-Train.git && cd Pith-Train
@@ -33,23 +33,35 @@ uv sync
 
 ## Getting Started
 
-Here is an example of pretraining Qwen3-30B-A3B. Other models like DeepSeek-V2-Lite are also supported; see the [`examples`](examples/) directory for more configurations.
+Pretrain Qwen3-30B-A3B from scratch. Datasets and checkpoints are stored in the `workspace` folder by default. Other models like DeepSeek-V2-Lite follow the same steps. See [`examples`](examples) for available configurations.
 
-**1. Build a tokenized dataset:**
+**1. Prepare the dataset**
 
 ```bash
 bash examples/build_tokenized_corpus/launch.sh dclm-qwen3
 ```
 
-This downloads and tokenizes the dataset to `workspace/datasets/dclm-baseline/toktxt/qwen3`.
+Download and tokenize the DCLM pretraining corpus into mmap-friendly packed sequences. Each model uses its own tokenizer, so switching to a different model requires running this step again.
 
-**2. Review the training config** at [`examples/pretrain_language_model/qwen3-30b-a3b/script.py`](examples/pretrain_language_model/qwen3-30b-a3b/script.py) and adjust parallelism sizes, batch size, or other hyperparameters to match your cluster.
+**2. Configure training**
 
-**3. Launch training:**
+Edit [`examples/pretrain_language_model/qwen3-30b-a3b/script.py`](examples/pretrain_language_model/qwen3-30b-a3b/script.py) to adjust parallelism, batch size, learning rate, and other hyperparameters. The model architecture is defined in the accompanying [`config.json`](examples/pretrain_language_model/qwen3-30b-a3b/config.json).
+
+**3. Launch training**
 
 ```bash
 bash examples/pretrain_language_model/launch.sh qwen3-30b-a3b
 ```
+
+The launch script auto-detects GPUs and supports both single-node and multi-node (SLURM) setups. Training resumes from the latest checkpoint automatically, and checkpoints are reshardable across different parallelism.
+
+**4. Export checkpoint**
+
+```bash
+bash examples/convert_checkpoint/launch.sh qwen3-30b-a3b
+```
+
+Convert a training checkpoint to standard Hugging Face format for evaluation or inference. The same tool also supports importing Hugging Face checkpoints for continued pretraining.
 
 ## Architecture
 
@@ -68,15 +80,9 @@ PithTrain is structured in three layers:
   - *Training Infrastructure* — `torch.compile`, optimizer and LR scheduling, checkpointing, logging, etc.
 - **Operators** — PyTorch (basic ops, NCCL), operator libraries (DeepGEMM, FlashAttention), and Python DSLs (Triton, TileLang).
 
-## Model Compatibility and Evaluation
-
-Checkpoints can be converted between PyTorch Distributed Checkpoint (DCP) and Hugging Face `safetensors` via [examples/convert_checkpoint](examples/convert_checkpoint/).
-
-The exported checkpoints are Hugging Face-compatible and can be used with evaluation tools like `lm-evaluation-harness` and inference engines like `vLLM` and `SGLang`.
-
 ## Attribution
 
-PithTrain is built on top of DeepSeek's [DualPipe](https://github.com/deepseek-ai/DualPipe), which provides the original pipeline parallelism schedule and example code.
+PithTrain is developed by contributors from CMU. It is built on top of DeepSeek's [DualPipe](https://github.com/deepseek-ai/DualPipe), which provides the original pipeline parallelism schedule and examples. We thank the [CMU Foundation and Language Model (FLAME) Center](https://www.cmu.edu/flame/) for providing the compute resources to develop PithTrain. We also acknowledge the support of DGX B200 from NVIDIA.
 
 ## License
 
