@@ -22,6 +22,7 @@ from transformers import AutoConfig
 from pithtrain.config import SlottedDefault
 from pithtrain.dualpipe import DualPipeV, set_p2p_tensor_dtype, set_p2p_tensor_shapes
 from pithtrain.models.deepseek_v2_lite import DeepseekV2LiteModel
+from pithtrain.models.gpt_oss import GptOssModel
 from pithtrain.models.qwen3_30b_a3b import Qwen3MoeModel
 from pithtrain.modules.dataset import ConcatDataset, MemmapDataset
 from pithtrain.modules.load_balance import make_load_balance_loss_fn
@@ -88,7 +89,15 @@ class TrainingCfg(SlottedDefault):
     The learning rate scheduler to use after linear warmup.
     """
 
-    model: Union[Path, Literal["deepseek-ai/DeepSeek-V2-Lite", "Qwen/Qwen3-30B-A3B"]]
+    model: Union[
+        Path,
+        Literal[
+            "deepseek-ai/DeepSeek-V2-Lite",
+            "Qwen/Qwen3-30B-A3B",
+            "openai/gpt-oss-20b",
+            "openai/gpt-oss-120b",
+        ],
+    ]
     """
     The model to use for training. Can be a HuggingFace model ID
     (e.g. ``"Qwen/Qwen3-30B-A3B"``) or a local path to a config JSON file
@@ -265,7 +274,7 @@ def apply_fsdp(model, mesh: torch.distributed.DeviceMesh):
     )
     # FSDP recommends shard models from the bottom to the top.
     for i in range(2):
-        assert isinstance(model[i], (DeepseekV2LiteModel, Qwen3MoeModel))
+        assert isinstance(model[i], (DeepseekV2LiteModel, GptOssModel, Qwen3MoeModel))
         if model[i].embed_tokens is not None:
             fully_shard(
                 model[i].embed_tokens,
@@ -351,6 +360,9 @@ def setup_model(cfg: TrainingCfg, ctx: TrainingCtx, distributed: DistributedCtx)
     elif module_config.model_type == "qwen3_moe":
         ModelClass = Qwen3MoeModel
         model_kwargs = {"cp_group": cp_group}
+    elif module_config.model_type == "gpt_oss":
+        ModelClass = GptOssModel
+        model_kwargs = {"cp_group": cp_group}
     else:
         raise ValueError(f"Unsupported model_type: {module_config.model_type}")
 
@@ -380,8 +392,8 @@ def setup_model(cfg: TrainingCfg, ctx: TrainingCtx, distributed: DistributedCtx)
         dp_ep_group = device_mesh["dp", "ep"]._flatten().get_group()
         for i in range(2):
             for layer in modules[i].layers.values():
-                if hasattr(layer.mlp, "gate"):
-                    gate = layer.mlp.gate
+                gate = getattr(layer.mlp, "gate", None) or getattr(layer.mlp, "router", None)
+                if gate is not None:
                     loss_fn = make_load_balance_loss_fn(
                         cfg.moe_load_balance_type,
                         cfg.moe_load_balance_coef,

@@ -1,0 +1,21 @@
+"""Download one shard of DCLM and tokenize with the GPT-OSS tokenizer."""
+
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+
+from pithtrain.tasks.build_tokenized_corpus import BuildTokenizedCorpusCfg, launch
+
+if __name__ == "__main__":
+    kwargs = dict()
+    kwargs["repo_type"] = "dataset"
+    kwargs["local_dir"] = "workspace/datasets/dclm-baseline/rawtxt"
+    kwargs["allow_patterns"] = "global-shard_03_of_10/local-shard_1_of_10/*.jsonl.zst"
+    snapshot_download("mlfoundations/dclm-baseline-1.0", **kwargs)
+
+if __name__ == "__main__":
+    cfg = BuildTokenizedCorpusCfg()
+    cfg.tokenizer_name = "openai/gpt-oss-20b"
+    cfg.source_path = Path("workspace/datasets/dclm-baseline/rawtxt")
+    cfg.output_path = Path("workspace/datasets/dclm-baseline/toktxt/gpt-oss")
+    launch(cfg)

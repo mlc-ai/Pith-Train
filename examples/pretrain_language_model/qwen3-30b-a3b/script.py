@@ -4,7 +4,7 @@ Pretrain Qwen3-30B-A3B with 2-way pipeline parallelism and 8-way expert parallel
 
 from pathlib import Path
 
-from pithtrain.modules.logging import LoggingWandbCfg
+from pithtrain.modules.logging import LoggingWandbCfg  # noqa: F401
 from pithtrain.tasks.pretrain_language_model import PretrainLanguageModelCfg, launch
 
 cfg = PretrainLanguageModelCfg()

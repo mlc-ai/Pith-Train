@@ -1,8 +1,8 @@
-"""
-Checkpoint conversion from HuggingFace to DCP and vice versa.
-"""
+"""Checkpoint conversion from HuggingFace to DCP and vice versa."""
 
 import json
+import math
+import re
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from logging import Logger
@@ -63,11 +63,141 @@ class ConvertCheckpointCtx(SlottedDefault):
     """
 
 
+def _dequantize_mxfp4(
+    blocks: torch.Tensor,
+    scales: torch.Tensor,
+    *,
+    dtype: torch.dtype = torch.bfloat16,
+    rows_per_chunk: int = 32768 * 1024,
+) -> torch.Tensor:
+    """Dequantize MXFP4-packed blocks with per-row shared 8-bit exponent.
+
+    Low nibble first; scales are biased by 127.  Adapted from
+    Megatron-Bridge ``gpt_oss_bridge._dequantize_mxfp4``.
+    """
+    assert blocks.shape[:-1] == scales.shape, f"{blocks.shape=} does not match {scales.shape=}"
+    FP4_VALUES = [
+        +0.0,
+        +0.5,
+        +1.0,
+        +1.5,
+        +2.0,
+        +3.0,
+        +4.0,
+        +6.0,
+        -0.0,
+        -0.5,
+        -1.0,
+        -1.5,
+        -2.0,
+        -3.0,
+        -4.0,
+        -6.0,
+    ]
+    scales = scales.to(torch.int32) - 127
+    lut = torch.tensor(FP4_VALUES, dtype=dtype, device=blocks.device)
+
+    *prefix_shape, G, B = blocks.shape
+    rows_total = math.prod(prefix_shape) * G
+
+    blocks = blocks.reshape(rows_total, B)
+    scales = scales.reshape(rows_total, 1)
+
+    out = torch.empty(rows_total, B * 2, dtype=dtype, device=blocks.device)
+
+    for r0 in range(0, rows_total, rows_per_chunk):
+        r1 = min(r0 + rows_per_chunk, rows_total)
+        blk = blocks[r0:r1]
+        exp = scales[r0:r1]
+        idx_lo = (blk & 0x0F).to(torch.long)
+        idx_hi = (blk >> 4).to(torch.long)
+        sub = out[r0:r1]
+        sub[:, 0::2] = lut[idx_lo]
+        sub[:, 1::2] = lut[idx_hi]
+        torch.ldexp(sub, exp, out=sub)
+        del idx_lo, idx_hi, blk, exp
+
+    return out.reshape(*prefix_shape, G, B * 2).view(*prefix_shape, G * B * 2)
+
+
+def _is_gpt_oss(load_path: Path) -> bool:
+    config_path = Path(load_path, "config.json")
+    if config_path.exists():
+        with open(config_path) as f:
+            config = json.load(f)
+        return config.get("model_type") == "gpt_oss"
+    return False
+
+
+def _hf2dcp_gpt_oss(load_path: Path, save_path: Path, stdout: Logger) -> None:
+    with open(Path(load_path, "model.safetensors.index.json")) as f:
+        weight_map = json.load(f)["weight_map"]
+
+    shard_files = set(weight_map.values())
+    stdout.info(
+        "Converting GPT-OSS HF checkpoint from %s (%d shards)" % (load_path, len(shard_files))
+    )
+
+    raw: Dict[str, torch.Tensor] = dict()
+    for i, shard_file in enumerate(sorted(shard_files), start=1):
+        stdout.info("Reading shard %d/%d: %s" % (i, len(shard_files), shard_file))
+        with safe_open(str(Path(load_path, shard_file)), framework="pt", device="cpu") as f:
+            for key in f.keys():
+                raw[key] = f.get_tensor(key)
+
+    # MXFP4 on-disk is [E, out, in] with the quantization axis along in
+    # (32 FP4 values per block).  Dequant drops the last two dims:
+    #   gate_up_proj_blocks [E, 2*inter, G, 16] → [E, 2*inter, hidden]
+    #   down_proj_blocks    [E, hidden,  G, 16] → [E, hidden, inter]
+    dequantized: Dict[str, torch.Tensor] = dict()
+    seen_blocks = set()
+    for key in sorted(raw.keys()):
+        if key.endswith("_blocks"):
+            base = key.removesuffix("_blocks")
+            scales_key = base + "_scales"
+            if scales_key in raw:
+                stdout.info("Dequantizing MXFP4: %s" % base)
+                flat = _dequantize_mxfp4(raw[key], raw[scales_key])
+                dequantized[base] = flat.contiguous()
+                seen_blocks.add(key)
+                seen_blocks.add(scales_key)
+
+    for key, tensor in raw.items():
+        if key not in seen_blocks and key not in dequantized:
+            dequantized[key] = tensor
+
+    model_state_dict: Dict[str, torch.Tensor] = dict()
+    for key, tensor in dequantized.items():
+        canon = key.removeprefix("model.")
+
+        if canon.endswith(
+            (
+                ".mlp.experts.gate_up_proj",
+                ".mlp.experts.gate_up_proj_bias",
+                ".mlp.experts.down_proj",
+                ".mlp.experts.down_proj_bias",
+            )
+        ):
+            for idx in range(tensor.shape[0]):
+                expert_key = canon.replace(".experts.", ".experts.%d." % idx)
+                model_state_dict[expert_key] = tensor[idx].contiguous()
+        else:
+            model_state_dict[canon] = tensor
+
+    save_path.mkdir(parents=True, exist_ok=True)
+    dcp.save({"app": {"model": model_state_dict}}, checkpoint_id=save_path, no_dist=True)
+    stdout.info("Saved DCP checkpoint to %s (%d weights)" % (save_path, len(model_state_dict)))
+
+
 def hf2dcp(cfg: ConvertCheckpointCfg, stdout: Logger) -> None:
     """
     Convert HuggingFace checkpoint to DCP format.
     """
     load_path, save_path = Path(cfg.load_path), Path(cfg.save_path)
+
+    if _is_gpt_oss(load_path):
+        _hf2dcp_gpt_oss(load_path, save_path, stdout)
+        return
 
     with open(Path(load_path, "model.safetensors.index.json")) as f:
         weight_map = json.load(f)["weight_map"]
@@ -87,10 +217,48 @@ def hf2dcp(cfg: ConvertCheckpointCfg, stdout: Logger) -> None:
     stdout.info("Saved DCP checkpoint to %s (%d weights)" % (save_path, len(model_state_dict)))
 
 
+def _is_gpt_oss_dcp(metadata) -> bool:
+    return any("gate_up_proj" in k for k in metadata.state_dict_metadata.keys())
+
+
+def _stack_experts(state_dict: Dict[str, torch.Tensor], stdout: Logger) -> Dict[str, torch.Tensor]:
+    """Stack per-expert canonical keys along dim 0 and transpose 3-D weights
+    to HF's live ``[E, in, out]`` layout.  Our DCP stores ``[E, out, in]``
+    (TorchTitan / TE convention); the transpose lives at this HF boundary
+    so the model and ``hf2dcp`` never need to see it.  1-D biases pass
+    through unchanged.
+    """
+    _WEIGHT_KEYS = (".mlp.experts.gate_up_proj", ".mlp.experts.down_proj")
+
+    indexed = re.compile(r"(.*\.mlp\.experts)\.(\d+)\.(.*)")
+    to_stack: Dict[str, Dict[int, torch.Tensor]] = {}
+    plain: Dict[str, torch.Tensor] = {}
+
+    for canon, tensor in state_dict.items():
+        m = indexed.match(canon)
+        if m:
+            prefix, idx_str, suffix = m.group(1), m.group(2), m.group(3)
+            stacked_canon = "%s.%s" % (prefix, suffix)
+            to_stack.setdefault(stacked_canon, {})[int(idx_str)] = tensor
+        else:
+            plain[canon] = tensor
+
+    result = dict(plain)
+    for stacked_canon, by_idx in to_stack.items():
+        items = sorted(by_idx.items())
+        stacked = torch.stack([t for _, t in items])
+        if stacked_canon.endswith(_WEIGHT_KEYS):
+            stacked = stacked.transpose(-2, -1).contiguous()
+        result[stacked_canon] = stacked
+    stdout.info(
+        "Stacked %d expert tensors → %d grouped keys"
+        % (sum(len(v) for v in to_stack.values()), len(to_stack))
+    )
+    return result
+
+
 def dcp2hf(cfg: ConvertCheckpointCfg, stdout: Logger) -> None:
-    """
-    Convert DCP checkpoint to HuggingFace format.
-    """
+    """Convert DCP checkpoint to HuggingFace format."""
     load_path, save_path = Path(cfg.load_path), Path(cfg.save_path)
     max_shard_size = cfg.max_shard_size
     stdout.info("Converting DCP checkpoint from %s" % load_path)
@@ -103,9 +271,13 @@ def dcp2hf(cfg: ConvertCheckpointCfg, stdout: Logger) -> None:
     dcp.load(state_dict, checkpoint_id=load_path, no_dist=True)
     stdout.info("Loaded %d model weights from DCP" % len(state_dict))
 
+    canonical = {k.removeprefix(model_prefix): v for k, v in state_dict.items()}
+
+    if _is_gpt_oss_dcp(metadata):
+        canonical = _stack_experts(canonical, stdout)
+
     hf_state_dict = dict()
-    for key, tensor in state_dict.items():
-        canon = key.removeprefix(model_prefix)
+    for canon, tensor in canonical.items():
         hf_state_dict[canon if canon.startswith("lm_head.") else "model." + canon] = tensor
 
     shards: List[Tuple[str, Dict[str, torch.Tensor]]] = []

@@ -19,6 +19,7 @@ from pithtrain.dualpipe import DualPipeV, set_p2p_tensor_dtype, set_p2p_tensor_s
 from pithtrain.layers.factory import ModelImplMode
 from pithtrain.layers.group_linear import GroupLinear
 from pithtrain.models.deepseek_v2_lite import DeepseekV2LiteModel, DeepseekV2LiteMoEGate
+from pithtrain.models.gpt_oss import GptOssExperts, GptOssModel, GptOssTopKRouter
 from pithtrain.models.qwen3_30b_a3b import Qwen3MoeGate, Qwen3MoeModel
 from pithtrain.modules.distributed import DistributedCfg, DistributedCtx, distributed_context
 
@@ -30,8 +31,14 @@ def fill_weights(module: nn.Module):
             nn.init.zeros_(module.bias)
     elif isinstance(module, GroupLinear):
         nn.init.xavier_uniform_(module.weight, gain=1.0)
-    elif isinstance(module, (DeepseekV2LiteMoEGate, Qwen3MoeGate)):
+    elif isinstance(module, GptOssExperts):
+        # Raw nn.Parameter — the GroupLinear branch above doesn't reach them.
+        nn.init.xavier_uniform_(module.gate_up_proj, gain=1.0)
+        nn.init.xavier_uniform_(module.down_proj, gain=1.0)
+    elif isinstance(module, (DeepseekV2LiteMoEGate, Qwen3MoeGate, GptOssTopKRouter)):
         nn.init.xavier_uniform_(module.weight, gain=1.0)
+        if getattr(module, "bias", None) is not None:
+            nn.init.zeros_(module.bias)
     elif isinstance(module, nn.Embedding):
         nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
@@ -75,6 +82,29 @@ def shard_layers(layers: nn.ModuleDict, stage_id: int, num_stages: int, config):
 
 
 def shard_experts(model, ep_rank, ep_size):
+    num_experts = None
+    for child in model.children():
+        if isinstance(child, GroupLinear):
+            num_experts = child.num_groups
+            break
+    if num_experts is None:
+        gu = getattr(model, "gate_up_proj", None)
+        if isinstance(gu, nn.Parameter):
+            num_experts = getattr(model, "num_experts", None)
+    if num_experts is not None and num_experts % ep_size == 0 and num_experts > 1:
+        experts_per_ep_rank = num_experts // ep_size
+        expert_begin = ep_rank * experts_per_ep_rank
+        expert_end = (ep_rank + 1) * experts_per_ep_rank
+        for pname, param in list(model.named_parameters(recurse=False)):
+            if param.dim() >= 1 and param.shape[0] == num_experts:
+                new_param = nn.Parameter(
+                    param.data[expert_begin:expert_end].clone(),
+                    requires_grad=param.requires_grad,
+                )
+                if param.grad is not None:
+                    new_param.grad = param.grad[expert_begin:expert_end].clone()
+                setattr(model, pname, new_param)
+
     for name, child in model.named_children():
         if isinstance(child, GroupLinear):
             experts_per_ep_rank = child.num_groups // ep_size
@@ -101,7 +131,7 @@ def apply_fsdp(model, mesh: torch.distributed.DeviceMesh, dtype):
     )
     # FSDP recommends shard models from the bottom to the top.
     for i in range(2):
-        assert isinstance(model[i], (DeepseekV2LiteModel, Qwen3MoeModel))
+        assert isinstance(model[i], (DeepseekV2LiteModel, GptOssModel, Qwen3MoeModel))
         if model[i].embed_tokens is not None:
             fully_shard(
                 model[i].embed_tokens,
@@ -170,6 +200,13 @@ def main(ctx: DistributedCtx, model_name: str):
     elif config.model_type == "qwen3_moe":
         ModelClass = Qwen3MoeModel
         config.num_hidden_layers = min(config.num_hidden_layers, 8)
+    elif config.model_type == "gpt_oss":
+        ModelClass = GptOssModel
+        # Keep alternating sliding/full pattern when slicing layers.
+        keep = min(config.num_hidden_layers, 8)
+        if getattr(config, "layer_types", None) is not None:
+            config.layer_types = config.layer_types[:keep]
+        config.num_hidden_layers = keep
     else:
         raise ValueError(f"Unsupported model: {model_name}")
 
@@ -182,7 +219,10 @@ def main(ctx: DistributedCtx, model_name: str):
     full_x = torch.randint(
         0, vocab_size, (ep_size * num_chunks * micro_batch_size, sequence_length)
     )
-    full_l = torch.randn(
+    # Labels are scaled up so MSE gradients on small bias terms (router.bias,
+    # layer-norm weights) sit well above the bf16 mantissa noise floor.
+    label_scale = 10.0
+    full_l = label_scale * torch.randn(
         ep_size * num_chunks * micro_batch_size, sequence_length, vocab_size, dtype=dtype
     )
     local_x = full_x.reshape(ep_size, num_chunks * micro_batch_size, sequence_length)[ep_rank]
@@ -341,6 +381,8 @@ if __name__ == "__main__":
     models = []
     models.append("examples/pretrain_language_model/deepseek-v2-lite/config.json")
     models.append("examples/pretrain_language_model/qwen3-30b-a3b/config.json")
+    models.append("examples/pretrain_language_model/gpt-oss-20b/config.json")
+    models.append("examples/pretrain_language_model/gpt-oss-120b/config.json")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--pp-size", type=int, required=True)

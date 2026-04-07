@@ -4,7 +4,7 @@ Pretrain DeepSeek-V2-Lite with 2-way pipeline parallelism and 2-way expert paral
 
 from pathlib import Path
 
-from pithtrain.modules.logging import LoggingWandbCfg
+from pithtrain.modules.logging import LoggingWandbCfg  # noqa: F401
 from pithtrain.tasks.pretrain_language_model import PretrainLanguageModelCfg, launch
 
 cfg = PretrainLanguageModelCfg()
