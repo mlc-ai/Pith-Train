@@ -95,7 +95,7 @@ def apply_fsdp(model, mesh: torch.distributed.DeviceMesh, dtype):
     other_fsdp_mesh = mesh["dp", "ep"]._flatten()
     mp = MixedPrecisionPolicy(
         param_dtype=dtype,
-        reduce_dtype=dtype,
+        reduce_dtype=torch.float32,
         output_dtype=None,
         cast_forward_inputs=True,
     )

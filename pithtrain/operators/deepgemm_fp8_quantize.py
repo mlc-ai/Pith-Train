@@ -312,6 +312,7 @@ def fused_rowwise_kmajor_cast_to_fp8(
         block_starts,
         right=True,
     ).to(torch.int32)
+    block_to_group.clamp_(max=grouped_mm_offs.shape[0] - 1)
 
     scaling_mode = "e8m0" if _USE_E8M0_SCALES else "fp32"
 

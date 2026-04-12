@@ -30,7 +30,7 @@ import torch.distributed as dist
 import triton
 import triton.language as tl
 
-from pithtrain.operators.token_scatter import get_pinned_buffer
+from pithtrain.operators.token_scatter import get_pinned_buffer, padded_index_gather
 
 
 @triton.jit
@@ -667,7 +667,7 @@ def moe_ep_prepare_dispatch(
 
     # Trim + gather dedup tokens for dispatch
     total_dedup = sum(dedup_input_splits)
-    dedup_sorted_tokens = hidden_states[dispatch_token_idxs[:total_dedup]]
+    dedup_sorted_tokens = padded_index_gather(hidden_states, dispatch_token_idxs[:total_dedup])
 
     return (
         dedup_sorted_tokens,

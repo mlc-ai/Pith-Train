@@ -10,26 +10,21 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
 
-from pithtrain.dualpipe.execution import (
-    EpilogArgs,
-    EpilogOuts,
-    IntermediateTensors,
-    PrologArgs,
-    PrologOuts,
-)
+from pithtrain.dualpipe.execution import EpilogArgs, IntermediateTensors, PrologArgs, PrologOuts
+from pithtrain.dualpipe.layer_partition import layer_partition
 from pithtrain.dualpipe.modeling import decoder_layer_backward, decoder_layer_forward
 from pithtrain.dualpipe.utils import run_backward
-from pithtrain.layers.factory import (
-    ModelImplMode,
-    get_group_linear_cls,
-    get_linear_cls,
-)
+from pithtrain.layers.factory import ModelImplMode, get_group_linear_cls, get_linear_cls
 from pithtrain.models.interface import ForwardAttnOutput
 from pithtrain.modules.load_balance import MoELoadBalanceLossInjector, MoELoadBalanceLossTracker
 from pithtrain.operators.ep_dispatch import moe_ep_prepare_dispatch
 from pithtrain.operators.flash_attn_v4 import flash_attn_func
 from pithtrain.operators.ring_attention.standard import ring_attention_func
-from pithtrain.operators.token_scatter import precompute_group_indices, scatter_for_grouped_gemm
+from pithtrain.operators.token_scatter import (
+    padded_index_gather,
+    precompute_group_indices,
+    scatter_for_grouped_gemm,
+)
 
 torch._dynamo.allow_in_graph(MoELoadBalanceLossInjector)
 
@@ -236,7 +231,7 @@ class Qwen3MoeGate(nn.Module):
         batch_size, seq_len, hidden_size = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_size)
 
-        logits = F.linear(hidden_states.float(), self.weight.float(), None)
+        logits = F.linear(hidden_states, self.weight, None)
         scores = logits.softmax(dim=-1, dtype=torch.float32)
         topk_weight, topk_idx = torch.topk(scores, k=self.num_experts_per_tok, dim=-1, sorted=False)
 
@@ -598,12 +593,13 @@ class Qwen3MoeDecoderLayer(nn.Module):
 
         assert expert_idxs is not None
         if expand_idx is not None:
-            gathered_tokens = gathered_tokens[expand_idx]
+            gathered_tokens = padded_index_gather(gathered_tokens, expand_idx)
         output_tokens, reverse_shuffle_idxs, grouped_mm_offs, ks, ks_tensor = (
             scatter_for_grouped_gemm(gathered_tokens, expert_idxs, self.mlp.experts_per_rank)
         )
+        del gathered_tokens  # free expanded tokens; no longer needed after scatter
         outs = self.mlp.experts(output_tokens, grouped_mm_offs, ks=ks, ks_tensor=ks_tensor)
-        outs = outs[reverse_shuffle_idxs]
+        outs = padded_index_gather(outs, reverse_shuffle_idxs)
         return outs
 
     @torch.compile(fullgraph=True)
@@ -720,10 +716,7 @@ class Qwen3MoeModel(nn.Module):
 
         self.embed_tokens = nn.Embedding(vocab_size, hidden_size) if stage_id == 0 else None
 
-        num_local_layers = [config.num_hidden_layers // num_stages for _ in range(num_stages)]
-        layers_per_stage_residual = config.num_hidden_layers % num_stages
-        for i in range(layers_per_stage_residual):
-            num_local_layers[(1 - (i % 2) * 2) * (i // 2) - (i % 2)] += 1
+        num_local_layers = layer_partition(config.num_hidden_layers, num_stages)
         layer_id_begin = sum(num_local_layers[:stage_id])
         layer_id_end = layer_id_begin + num_local_layers[stage_id]
 
@@ -826,8 +819,6 @@ class Qwen3MoeModel(nn.Module):
                 dst = intermediate_tensors.layers[layer_idx]
                 for field in fields(layer_record):
                     src_rec = getattr(layer_record, field.name)
-                    if not hasattr(src_rec, "args"):
-                        continue
                     dst_rec = getattr(dst, field.name)
                     for rf in fields(src_rec):
                         setattr(dst_rec, rf.name, getattr(src_rec, rf.name))
@@ -847,7 +838,6 @@ class Qwen3MoeModel(nn.Module):
             intermediate_tensors.epilog.args = EpilogArgs(hidden_states)
             hidden_states = self.norm(hidden_states)
             hidden_states = self.lm_head(hidden_states)
-            intermediate_tensors.epilog.outs = EpilogOuts(hidden_states)
 
         return hidden_states
 
@@ -870,7 +860,6 @@ class Qwen3MoeModel(nn.Module):
             loss.detach_()
             dy = (intermediate_tensors.epilog.args.hidden_states.grad,)
             intermediate_tensors.epilog.args = None
-            intermediate_tensors.epilog.outs = None
             loss = None
         else:
             assert module.norm is None

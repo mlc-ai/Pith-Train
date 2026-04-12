@@ -11,14 +11,10 @@ from pithtrain.dualpipe.execution import (
     Stage1OutsMlp,
     Stage1OutsMoe,
     Stage1Record,
-    Stage2Args,
-    Stage2Outs,
     Stage2Record,
     Stage3Args,
     Stage3Outs,
     Stage3Record,
-    Stage4Args,
-    Stage4Outs,
     Stage4Record,
     Stage5Args,
     Stage5Outs,
@@ -125,16 +121,11 @@ def decoder_layer_forward(
     # Stage 2.
     nvtx.range_push("layer%02d.stage2_f" % layer.idx)
     record = Stage2Record()
-    sorted_tokens = sorted_tokens.detach().requires_grad_()
-    record.args = Stage2Args(sorted_tokens)
-
     gathered_tokens, record.ctx = decoder_layer_forward_dispatch(
-        sorted_tokens, dedup_output_splits, dedup_input_splits, ep_group
+        sorted_tokens.detach(), dedup_output_splits, dedup_input_splits, ep_group
     )
     fwd_comm_work = getattr(gathered_tokens, "comm_work", None)
     setattr(gathered_tokens, "comm_work", None)
-
-    record.outs = Stage2Outs(gathered_tokens)
     intermediate_tensors.stage2 = record
     nvtx.range_pop()
 
@@ -146,26 +137,33 @@ def decoder_layer_forward(
 
     if fwd_comm_work is not None:
         fwd_comm_work.wait()
+    # Stage 2 all-to-all has completed — sorted_tokens storage is no longer read.
+    # Free it now; run_backward only needs the grad_fn chain, not the values.
+    # Guard: only when a2a actually occurred (ep_size > 1); otherwise sorted_tokens
+    # and gathered_tokens share storage.
+    if has_experts and fwd_comm_work is not None:
+        sorted_tokens.untyped_storage().resize_(0)
 
     moe_outs = layer.forward_mlp(gathered_tokens, expert_idxs, expand_idx)
 
     record.outs = Stage3Outs(moe_outs)
+    # Free args storage — values no longer needed, only .grad is read after backward.
+    # Only safe for MoE layers with EP: padded_index_gather is the first consumer and
+    # doesn't save the input.  For dense layers or ep_size==1, gate_proj/up_proj may
+    # save gathered_tokens directly, or it shares storage with sorted_tokens.
+    if has_experts and fwd_comm_work is not None:
+        gathered_tokens.untyped_storage().resize_(0)
     intermediate_tensors.stage3 = record
     nvtx.range_pop()
 
     # Stage 4.
     nvtx.range_push("layer%02d.stage4_f" % layer.idx)
     record = Stage4Record()
-    moe_outs = moe_outs.detach().requires_grad_()
-    record.args = Stage4Args(moe_outs)
-
     moe_outs, record.ctx = decoder_layer_forward_combine(
-        moe_outs, input_splits, output_splits, ep_group
+        moe_outs.detach(), input_splits, output_splits, ep_group
     )
     fwd_comm_work = getattr(moe_outs, "comm_work", None)
     setattr(moe_outs, "comm_work", None)
-
-    record.outs = Stage4Outs(moe_outs)
     intermediate_tensors.stage4 = record
     nvtx.range_pop()
 
@@ -179,6 +177,9 @@ def decoder_layer_forward(
 
     if fwd_comm_work is not None:
         fwd_comm_work.wait()
+    # Stage 4 all-to-all has completed — Stage 3 output is no longer read.
+    if has_experts and fwd_comm_work is not None:
+        intermediate_tensors.stage3.outs.moe_outs.untyped_storage().resize_(0)
     hidden_states = layer.forward_aggregate(moe_outs, moe_local_idxs, topk_weight, residual)
 
     record.outs = Stage5Outs(hidden_states)

@@ -31,10 +31,7 @@ import torch.nn as nn
 from torch.distributed.fsdp import FSDPModule, fully_shard
 
 from pithtrain.dualpipe import comm
-from pithtrain.dualpipe.execution import (
-    IntermediateTensors,
-    create_intermediate_tensors,
-)
+from pithtrain.dualpipe.execution import IntermediateTensors, create_intermediate_tensors
 from pithtrain.dualpipe.overlap import overlapped_forward_backward
 from pithtrain.dualpipe.utils import FP8WeightCacheControl, WeightGradStore, gather, scatter
 

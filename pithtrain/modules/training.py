@@ -259,7 +259,7 @@ def apply_fsdp(model, mesh: torch.distributed.DeviceMesh):
     other_fsdp_mesh = mesh["dp", "cp", "ep"]._flatten()
     mp = MixedPrecisionPolicy(
         param_dtype=torch.bfloat16,
-        reduce_dtype=torch.bfloat16,
+        reduce_dtype=torch.float32,
         output_dtype=None,
         cast_forward_inputs=True,
     )
@@ -276,15 +276,24 @@ def apply_fsdp(model, mesh: torch.distributed.DeviceMesh):
         if model[i].norm is not None:
             assert model[i].lm_head is not None
             fully_shard(
-                model[i].norm, mesh=other_fsdp_mesh, reshard_after_forward=True, mp_policy=mp
+                model[i].norm,
+                mesh=other_fsdp_mesh,
+                reshard_after_forward=True,
+                mp_policy=mp,
             )
             fully_shard(
-                model[i].lm_head, mesh=other_fsdp_mesh, reshard_after_forward=True, mp_policy=mp
+                model[i].lm_head,
+                mesh=other_fsdp_mesh,
+                reshard_after_forward=True,
+                mp_policy=mp,
             )
         for layer in model[i].layers.values():
             if hasattr(layer.mlp, "experts"):
                 fully_shard(
-                    layer.mlp.experts, mesh=moe_fsdp_mesh, reshard_after_forward=False, mp_policy=mp
+                    layer.mlp.experts,
+                    mesh=moe_fsdp_mesh,
+                    reshard_after_forward=False,
+                    mp_policy=mp,
                 )
             fully_shard(layer, mesh=other_fsdp_mesh, reshard_after_forward=False, mp_policy=mp)
             torch.distributed.fsdp.register_fsdp_forward_method(layer, "forward_attn")

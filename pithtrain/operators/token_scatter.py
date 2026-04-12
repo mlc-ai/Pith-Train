@@ -9,6 +9,7 @@ import triton.language as tl
 # per-call cudaStreamSynchronize overhead from .tolist() / .item().
 
 _pinned_buffers: dict[tuple[str, torch.dtype, int], torch.Tensor] = {}
+_GEMM_ALLOC_ALIGNMENT = 1024
 
 
 def get_pinned_buffer(name: str, numel: int, dtype: torch.dtype) -> torch.Tensor:
@@ -71,8 +72,11 @@ def _scatter_for_grouped_gemm_kernel(
     hidden_size,
     stride_src_m,  # sorted_tokens.stride(0)
     stride_dst_m,  # output_tokens.stride(0)
+    m,
+    num_groups,
     BLOCK_H: tl.constexpr,
     NUM_H_BLOCKS: tl.constexpr,
+    GEMM_ALLOC_ALIGNMENT: tl.constexpr,
 ):
     pid = tl.program_id(axis=0)
 
@@ -106,6 +110,28 @@ def _scatter_for_grouped_gemm_kernel(
         pad_base = base_offset.to(tl.int64) + actual_count
         for row_off in range(my_start, my_end):
             row_base = (pad_base + row_off) * stride_dst_m
+            for i in tl.static_range(NUM_H_BLOCKS):
+                h_offs = i * BLOCK_H + tl.arange(0, BLOCK_H)
+                mask = h_offs < hidden_size
+                tl.store(
+                    output_tokens_ptr + row_base + h_offs,
+                    tl.zeros([BLOCK_H], dtype=sorted_tokens_ptr.dtype.element_ty),
+                    mask=mask,
+                )
+
+    # --- Zero rows [actual_M, M_rounded) for GEMM allocation alignment ---
+    last_group_end = tl.load(grouped_mm_offs_ptr + num_groups - 1).to(tl.int64)
+    M_rounded = (
+        (last_group_end + GEMM_ALLOC_ALIGNMENT - 1) // GEMM_ALLOC_ALIGNMENT * GEMM_ALLOC_ALIGNMENT
+    )
+    align_pad = M_rounded - last_group_end
+
+    if align_pad > 0:
+        rows_per = (align_pad + m - 1) // m
+        my_start = pid * rows_per
+        my_end = tl.minimum(my_start + rows_per, align_pad)
+        for row_off in range(my_start, my_end):
+            row_base = (last_group_end + row_off) * stride_dst_m
             for i in tl.static_range(NUM_H_BLOCKS):
                 h_offs = i * BLOCK_H + tl.arange(0, BLOCK_H)
                 mask = h_offs < hidden_size
@@ -151,6 +177,11 @@ class ScatterForGroupedGemm(torch.autograd.Function):
 
         # Over-allocate: tight upper bound, no GPU data needed (no .item() sync)
         max_m_padded = m + num_groups * (padding_alignment - 1)
+        max_m_padded = (
+            (max_m_padded + _GEMM_ALLOC_ALIGNMENT - 1)
+            // _GEMM_ALLOC_ALIGNMENT
+            * _GEMM_ALLOC_ALIGNMENT
+        )
 
         # Over-allocated output — padding rows zeroed inside the scatter kernel
         # `output_tokens` will be zeroed inside the scatter kernel.
@@ -201,8 +232,11 @@ class ScatterForGroupedGemm(torch.autograd.Function):
             hidden_size,
             sorted_tokens.stride(0),
             output_tokens.stride(0),
+            m,
+            num_groups,
             BLOCK_H=BLOCK_H,
             NUM_H_BLOCKS=NUM_H_BLOCKS,
+            GEMM_ALLOC_ALIGNMENT=_GEMM_ALLOC_ALIGNMENT,
         )
 
         # Narrow to actual padded size (removes over-allocated tail)
@@ -213,7 +247,10 @@ class ScatterForGroupedGemm(torch.autograd.Function):
         copy_stream.synchronize()
         ks = ks_cpu.tolist()
         actual_M = sum(ks)
-        output_tokens = output_tokens[:actual_M]
+        M_rounded = (
+            (actual_M + _GEMM_ALLOC_ALIGNMENT - 1) // _GEMM_ALLOC_ALIGNMENT * _GEMM_ALLOC_ALIGNMENT
+        )
+        output_tokens = output_tokens[:M_rounded]
 
         ctx.save_for_backward(reverse_shuffle_idxs)
         return output_tokens, reverse_shuffle_idxs, grouped_mm_offs, ks_tensor, ks
@@ -232,6 +269,58 @@ class ScatterForGroupedGemm(torch.autograd.Function):
         # Backward: grad_sorted_tokens[i] = grad_output_tokens[reverse_shuffle_idxs[i]]
         grad_sorted_tokens = grad_output_tokens[reverse_shuffle_idxs]
         return grad_sorted_tokens, None, None, None
+
+
+class _PaddedIndexGather(torch.autograd.Function):
+    """Gather rows from a 2-D tensor by a 1-D index, with padded allocation.
+
+    Two optimizations over plain ``input[index]``:
+
+    1. **Avoids saving the input tensor** — the backward is a scatter-add that
+       only needs the indices and the input shape, not the input values.
+    2. **Pads the output allocation** to a fixed row alignment so the CUDA
+       caching allocator sees consistent block sizes across micro-batches,
+       reducing memory fragmentation from dynamic MoE token counts.
+    """
+
+    @staticmethod
+    def forward(
+        ctx, input: torch.Tensor, index: torch.Tensor, pad_to_multiple: int
+    ) -> torch.Tensor:
+        ctx.save_for_backward(index)
+        ctx.input_shape = input.shape
+        ctx.pad_to_multiple = pad_to_multiple
+        actual = index.shape[0]
+        padded = (actual + pad_to_multiple - 1) // pad_to_multiple * pad_to_multiple
+        buf = input.new_empty(padded, *input.shape[1:])
+        # Write directly into buf without materializing a temporary.
+        torch.index_select(input, 0, index, out=buf[:actual])
+        return buf[:actual]  # view — keeps the padded allocation alive
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        (index,) = ctx.saved_tensors
+        rows = ctx.input_shape[0]
+        padded_rows = (rows + ctx.pad_to_multiple - 1) // ctx.pad_to_multiple * ctx.pad_to_multiple
+        grad_buf = torch.zeros(
+            padded_rows,
+            *ctx.input_shape[1:],
+            dtype=grad_output.dtype,
+            device=grad_output.device,
+        )
+        grad_buf[:rows].scatter_add_(0, index.unsqueeze(-1).expand_as(grad_output), grad_output)
+        return grad_buf[:rows], None, None
+
+
+def padded_index_gather(
+    input: torch.Tensor, index: torch.Tensor, pad_to_multiple: int = 1024
+) -> torch.Tensor:
+    """Memory-efficient ``input[index]`` with padded allocation.
+
+    Does not save *input* for backward, and pads the output to
+    *pad_to_multiple* rows to reduce CUDA allocator fragmentation.
+    """
+    return _PaddedIndexGather.apply(input, index, pad_to_multiple)
 
 
 def scatter_for_grouped_gemm(
@@ -281,5 +370,7 @@ def precompute_group_indices(grouped_mm_offs: torch.Tensor, M: int) -> Optional[
 
         if ARCH_MAJOR < 10:
             row_indices = torch.arange(M, device=grouped_mm_offs.device)
-            return torch.searchsorted(grouped_mm_offs, row_indices, right=True).to(torch.int32)
+            gi = torch.searchsorted(grouped_mm_offs, row_indices, right=True).to(torch.int32)
+            gi.clamp_(max=grouped_mm_offs.shape[0] - 1)
+            return gi
     return None

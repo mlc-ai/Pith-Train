@@ -13,7 +13,6 @@ import torch
 import torch.cuda
 import torch.distributed.checkpoint as dcp
 import torch.nn as nn
-import torch.nn.functional as F
 import wandb
 from torch.distributed._tensor import DTensor
 from torch.distributed.checkpoint import FileSystemReader
@@ -38,6 +37,7 @@ from pithtrain.modules.distributed import DistributedCfg, DistributedCtx, distri
 from pithtrain.modules.load_balance import MoELoadBalanceLossTracker
 from pithtrain.modules.logging import LoggingCfg, LoggingCtx, activate_wandb, logging_context
 from pithtrain.modules.training import TrainingCfg, TrainingCtx, training_context
+from pithtrain.operators.cross_entropy import cross_entropy
 
 
 @dataclass(init=False, slots=True)
@@ -138,9 +138,9 @@ def get_global_batch(
 
 
 def criterion(output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    output = output.view(-1, output.size(-1)).float()
+    output = output.view(-1, output.size(-1))
     target = target.view(-1)
-    return F.cross_entropy(output, target, ignore_index=-100)
+    return cross_entropy(output, target, ignore_index=-100)
 
 
 @torch.no_grad()
