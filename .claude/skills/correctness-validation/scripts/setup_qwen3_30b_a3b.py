@@ -1,73 +1,77 @@
 """
 Setup shared data for Qwen3-30B-A3B correctness validation.
-
-Downloads a minimal DCLM corpus shard, tokenizes it with the Qwen3 tokenizer,
-and converts the HuggingFace checkpoint to DCP format.
-
-Idempotent: skips steps whose output already exists.
 """
 
+import os
 from pathlib import Path
 
-from huggingface_hub import snapshot_download
 
-from pithtrain.tasks.build_tokenized_corpus import BuildTokenizedCorpusCfg
-from pithtrain.tasks.build_tokenized_corpus import launch as step2_launch
-from pithtrain.tasks.convert_checkpoint import ConvertCheckpointCfg
-from pithtrain.tasks.convert_checkpoint import launch as step4_launch
+def run_step1():
+    """
+    Download one shard of the DCLM corpus.
+    """
+    rawtxt = Path("workspace/datasets/dclm-baseline/rawtxt")
+    rawzst = "global-shard_01_of_10/local-shard_0_of_10/shard_00000000_processed.jsonl.zst"
+    if Path(rawtxt, rawzst).exists():
+        print(f"DCLM shard already exists: {Path(rawtxt, rawzst)}")
+        return
+    from huggingface_hub import hf_hub_download
 
-# Step 1: Download minimal DCLM shard
+    repo_id = "mlfoundations/dclm-baseline-1.0"
+    hf_hub_download(repo_id, rawzst, repo_type="dataset", local_dir=rawtxt)
 
-RAWTXT = Path("workspace/datasets/dclm-baseline/rawtxt")
-SHARD = "global-shard_01_of_10/local-shard_0_of_10/shard_00000000_processed.jsonl.zst"
 
-if not (Path(RAWTXT, SHARD)).exists():
-    print(f"Downloading DCLM shard: {SHARD}")
-    snapshot_download(
-        "mlfoundations/dclm-baseline-1.0",
-        repo_type="dataset",
-        local_dir=str(RAWTXT),
-        allow_patterns=SHARD,
-    )
-else:
-    print(f"DCLM shard already exists: {Path(RAWTXT, SHARD)}")
+def run_step2():
+    """
+    Tokenize the DCLM corpus with Qwen3-30B-A3B tokenizer.
+    """
+    toktxt = Path("workspace/datasets/dclm-baseline/toktxt/qwen3")
+    if toktxt.exists() and any(toktxt.glob("*.bin")):
+        print(f"Tokenized corpus already exists: {toktxt}")
+        return
+    from pithtrain.tasks.build_tokenized_corpus import BuildTokenizedCorpusCfg, launch
 
-# Step 2: Tokenize with Qwen3 tokenizer
-
-TOKTXT = Path("workspace/datasets/dclm-baseline/toktxt/qwen3")
-
-if not TOKTXT.exists() or not any(TOKTXT.glob("*.bin")):
-    print("Tokenizing corpus with Qwen3 tokenizer")
     cfg = BuildTokenizedCorpusCfg()
     cfg.tokenizer_name = "Qwen/Qwen3-30B-A3B"
-    cfg.source_path = RAWTXT
-    cfg.output_path = TOKTXT
-    step2_launch(cfg)
-else:
-    print(f"Tokenized corpus already exists: {TOKTXT}")
+    cfg.source_path = Path("workspace/datasets/dclm-baseline/rawtxt")
+    cfg.output_path = toktxt
+    cfg.num_workers = min(os.cpu_count() or 1, 24)  # single file; avoid spawning idle pools
+    launch(cfg)
 
-# Step 3: Download HuggingFace checkpoint
 
-HF_IMPORT = Path("workspace/checkpoints/qwen3-30b-a3b/hf-import")
+def run_step3():
+    """
+    Download the Qwen3-30B-A3B HuggingFace checkpoint.
+    """
+    hf_import = Path("workspace/checkpoints/qwen3-30b-a3b/hf-import")
+    if hf_import.exists() and any(hf_import.glob("*.safetensors")):
+        print(f"HuggingFace checkpoint already exists: {hf_import}")
+        return
+    from huggingface_hub import snapshot_download
 
-if not HF_IMPORT.exists() or not any(HF_IMPORT.glob("*.safetensors")):
-    print("Downloading Qwen3-30B-A3B HuggingFace checkpoint")
-    snapshot_download(repo_id="Qwen/Qwen3-30B-A3B", local_dir=str(HF_IMPORT))
-else:
-    print(f"HuggingFace checkpoint already exists: {HF_IMPORT}")
+    repo_id = "Qwen/Qwen3-30B-A3B"
+    snapshot_download(repo_id, local_dir=hf_import)
 
-# Step 4: Convert to DCP format
 
-TORCH_DCP = Path("workspace/checkpoints/qwen3-30b-a3b/torch-dcp/step-00000000")
+def run_step4():
+    """
+    Convert to the checkpoint into DCP format for training.
+    """
+    torch_dcp = Path("workspace/checkpoints/qwen3-30b-a3b/torch-dcp/step-00000000")
+    if Path(torch_dcp, ".metadata").exists():
+        print(f"DCP checkpoint already exists: {torch_dcp}")
+        return
+    from pithtrain.tasks.convert_checkpoint import ConvertCheckpointCfg, launch
 
-if not TORCH_DCP.exists() or not any(TORCH_DCP.iterdir()):
-    print("Converting HuggingFace checkpoint to DCP format")
     cfg = ConvertCheckpointCfg()
     cfg.operation = "hf2dcp"
-    cfg.load_path = HF_IMPORT
-    cfg.save_path = TORCH_DCP
-    step4_launch(cfg)
-else:
-    print(f"DCP checkpoint already exists: {TORCH_DCP}")
+    cfg.load_path = Path("workspace/checkpoints/qwen3-30b-a3b/hf-import")
+    cfg.save_path = torch_dcp
+    launch(cfg)
 
-print("Setup complete for Qwen3-30B-A3B correctness validation.")
+
+if __name__ == "__main__":
+    run_step1()
+    run_step2()
+    run_step3()
+    run_step4()
