@@ -22,6 +22,7 @@ from pithtrain.modules.load_balance import MoELoadBalanceLossInjector, MoELoadBa
 from pithtrain.operators.ep_dispatch import moe_ep_prepare_dispatch
 from pithtrain.operators.flash_attn_v4 import mla_flash_attn_func
 from pithtrain.operators.ring_attention.standard import ring_attention_func
+from pithtrain.operators.silu_mul import silu_mul
 from pithtrain.operators.token_scatter import (
     padded_index_gather,
     precompute_group_indices,
@@ -195,12 +196,11 @@ class DeepseekV2LiteMLP(nn.Module):
         self.gate_proj = LinearCls(self.hidden_size, self.intermediate_size, bias=False)
         self.up_proj = LinearCls(self.hidden_size, self.intermediate_size, bias=False)
         self.down_proj = LinearCls(self.intermediate_size, self.hidden_size, bias=False)
-        self.act_fn = nn.SiLU()
 
     def forward(self, x):
-        g = self.act_fn(self.gate_proj(x))
+        g = self.gate_proj(x)
         u = self.up_proj(x)
-        return self.down_proj(g * u)
+        return self.down_proj(silu_mul(g, u))
 
 
 class DeepseekV2LiteExperts(nn.Module):
@@ -220,7 +220,6 @@ class DeepseekV2LiteExperts(nn.Module):
         self.gate_proj = GroupLinearCls(num_experts, self.hidden_size, self.intermediate_size)
         self.up_proj = GroupLinearCls(num_experts, self.hidden_size, self.intermediate_size)
         self.down_proj = GroupLinearCls(num_experts, self.intermediate_size, self.hidden_size)
-        self.act_fn = nn.SiLU()
 
     def forward(
         self,
@@ -231,9 +230,9 @@ class DeepseekV2LiteExperts(nn.Module):
     ):
         gi = precompute_group_indices(grouped_mm_offs, x.shape[0])
         kwargs = dict(grouped_mm_offs=grouped_mm_offs, ks=ks, ks_tensor=ks_tensor, group_indices=gi)
-        g = self.act_fn(self.gate_proj(x, **kwargs))
+        g = self.gate_proj(x, **kwargs)
         u = self.up_proj(x, **kwargs)
-        return self.down_proj(g * u, **kwargs)
+        return self.down_proj(silu_mul(g, u), **kwargs)
 
 
 class DeepseekV2LiteMoEGate(nn.Module):
