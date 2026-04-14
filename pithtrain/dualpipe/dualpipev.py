@@ -203,7 +203,6 @@ class DualPipeV(nn.Module):
                     None,
                     self.intermediate_tensors_chunks[phase][chunk_id],
                 )
-                # run_backward(outputs, output_grads)
         # Note: intermediate_tensors is pre-allocated and reused; backward clears tensor refs inside
         WeightGradStore.enabled = False
         if enable_zb:

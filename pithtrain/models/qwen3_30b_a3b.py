@@ -20,6 +20,7 @@ from pithtrain.modules.load_balance import MoELoadBalanceLossInjector, MoELoadBa
 from pithtrain.operators.ep_dispatch import moe_ep_prepare_dispatch
 from pithtrain.operators.flash_attn_v4 import flash_attn_func
 from pithtrain.operators.ring_attention.standard import ring_attention_func
+from pithtrain.operators.silu_mul import silu_mul
 from pithtrain.operators.token_scatter import (
     padded_index_gather,
     precompute_group_indices,
@@ -147,10 +148,9 @@ class Qwen3MoeMLP(nn.Module):
         self.gate_proj = LinearCls(hidden_size, intermediate_size, bias=False)
         self.up_proj = LinearCls(hidden_size, intermediate_size, bias=False)
         self.down_proj = LinearCls(intermediate_size, hidden_size, bias=False)
-        self.act_fn = nn.SiLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        return self.down_proj(silu_mul(self.gate_proj(x), self.up_proj(x)))
 
 
 class Qwen3MoeExperts(nn.Module):
@@ -173,7 +173,6 @@ class Qwen3MoeExperts(nn.Module):
         self.gate_proj = GroupLinearCls(num_experts, hidden_size, moe_intermediate_size)
         self.up_proj = GroupLinearCls(num_experts, hidden_size, moe_intermediate_size)
         self.down_proj = GroupLinearCls(num_experts, moe_intermediate_size, hidden_size)
-        self.act_fn = nn.SiLU()
 
     def forward(
         self,
@@ -184,9 +183,9 @@ class Qwen3MoeExperts(nn.Module):
     ) -> torch.Tensor:
         gi = precompute_group_indices(grouped_mm_offs, x.shape[0])
         kwargs = dict(grouped_mm_offs=grouped_mm_offs, ks=ks, ks_tensor=ks_tensor, group_indices=gi)
-        g = self.act_fn(self.gate_proj(x, **kwargs))
+        g = self.gate_proj(x, **kwargs)
         u = self.up_proj(x, **kwargs)
-        return self.down_proj(g * u, **kwargs)
+        return self.down_proj(silu_mul(g, u), **kwargs)
 
 
 class Qwen3MoeGate(nn.Module):
