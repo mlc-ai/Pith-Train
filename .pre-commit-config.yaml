@@ -1,3 +1,7 @@
+# Templates that carry placeholder tokens (`<model>`, `<Model>Model`) are
+# not valid Python until filled in; skip them across all hooks.
+exclude: '^\.claude/skills/.+/templates/.+$'
+
 repos:
   # Basic file hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks
