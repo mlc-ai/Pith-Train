@@ -22,6 +22,7 @@ from pithtrain.dualpipe.utils import run_backward
 from pithtrain.layers.factory import ModelImplMode, get_linear_cls
 from pithtrain.models.interface import ForwardAttnOutput
 from pithtrain.modules.load_balance import MoELoadBalanceLossInjector, MoELoadBalanceLossTracker
+from pithtrain.operators.clamped_swiglu import clamped_swiglu
 from pithtrain.operators.ep_dispatch import moe_ep_prepare_dispatch
 from pithtrain.operators.token_scatter import padded_index_gather, scatter_for_grouped_gemm
 
@@ -210,13 +211,7 @@ class GptOssExperts(nn.Module):
 
         gate_up = self._grouped_mm(x, self.gate_up_proj, grouped_mm_offs)
         gate_up = gate_up + self.gate_up_proj_bias[group_ids]
-        gate = gate_up[:, ::2]
-        up = gate_up[:, 1::2]
-
-        gate = gate.clamp(max=self.swiglu_limit)
-        up = up.clamp(min=-self.swiglu_limit, max=self.swiglu_limit)
-        glu = gate * torch.sigmoid(SWIGLU_ALPHA * gate)
-        activated = (up + 1) * glu
+        activated = clamped_swiglu(gate_up, SWIGLU_ALPHA, self.swiglu_limit)
 
         out = self._grouped_mm(activated, self.down_proj, grouped_mm_offs)
         out = out + self.down_proj_bias[group_ids]
