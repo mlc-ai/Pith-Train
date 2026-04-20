@@ -39,9 +39,7 @@ from pithtrain.models.interface import ModelProtocol
 
 
 def _clear_layer_records(layer: IntermediateTensorsLayer) -> None:
-    """
-    Clear tensor references from a layer's records while keeping records pre-allocated.
-    """
+    """Clear tensor references from a layer's records while keeping records pre-allocated."""
     for field in fields(layer):
         record = getattr(layer, field.name)
         for rf in fields(record):

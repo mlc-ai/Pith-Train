@@ -1,6 +1,4 @@
-"""
-MoE routing load balance losses.
-"""
+"""MoE routing load balance losses."""
 
 from typing import List, Optional, Tuple
 
@@ -185,9 +183,7 @@ class SequenceLevelLoadBalanceLoss:
 
 
 class MoELoadBalanceLossTracker:
-    """
-    Tracks load balance loss instances and accumulates loss values for logging.
-    """
+    """Tracks load balance loss instances and accumulates loss values for logging."""
 
     instances: List = []
     losses: List = []
@@ -207,9 +203,7 @@ class MoELoadBalanceLossTracker:
 
     @classmethod
     def get_total_count_and_clear(cls) -> Tuple[float, int]:
-        """
-        Return (total, count) of accumulated losses and clear the log.
-        """
+        """Return (total, count) of accumulated losses and clear the log."""
         if not cls.losses:
             return 0.0, 0
         total = torch.stack(cls.losses).sum().item()

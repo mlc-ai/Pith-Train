@@ -1,7 +1,7 @@
 """
 Static tests for the memory estimator tool.
 
-CPU-only analytical tests — no GPU or distributed setup needed.
+CPU-only analytical tests - no GPU or distributed setup needed.
 Run from repo root: pytest tools/tests/test_memory_estimator.py -v
 """
 

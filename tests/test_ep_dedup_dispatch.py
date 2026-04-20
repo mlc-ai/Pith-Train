@@ -130,13 +130,13 @@ def test_fused_dedup_dispatch(ms, k, num_experts, ep_size, seed):
         send_meta,
     ) = fused_dedup_prepare_dispatch(topk_ids, num_experts, ep_size, experts_per_rank)
 
-    # ── Deterministic checks (exact match) ──
+    # -- Deterministic checks (exact match) --
     ref_tokens_per_ep_rank = ref["tokens_per_expert"].view(ep_size, -1).sum(dim=1)
     assert torch.equal(tokens_per_ep_rank.cpu(), ref_tokens_per_ep_rank)
     ref_dedup_tokens_per_gpu = torch.tensor(ref["dedup_input_splits"], dtype=torch.int64)
     assert torch.equal(dedup_tokens_per_gpu.cpu(), ref_dedup_tokens_per_gpu)
 
-    # ── send_meta interleaved layout (embeds tokens_per_expert + dedup counts) ──
+    # -- send_meta interleaved layout (embeds tokens_per_expert + dedup counts) --
     ref_send_meta = torch.cat(
         [
             ref["tokens_per_expert"].view(ep_size, experts_per_rank),
@@ -146,7 +146,7 @@ def test_fused_dedup_dispatch(ms, k, num_experts, ep_size, seed):
     ).view(-1)
     assert torch.equal(send_meta.cpu(), ref_send_meta), "send_meta layout mismatch"
 
-    # ── Set equality per GPU chunk for dispatch_token_idxs ──
+    # -- Set equality per GPU chunk for dispatch_token_idxs --
     gpu_starts = dedup_tokens_per_gpu.cumsum(0) - dedup_tokens_per_gpu
     ref_dispatch, _, ref_gpu_starts = _reference_dispatch_token_idxs(
         topk_ids.cpu(), ep_size, experts_per_rank
@@ -161,7 +161,7 @@ def test_fused_dedup_dispatch(ms, k, num_experts, ep_size, seed):
         ref_set = set(ref_dispatch[ref_start : ref_start + count].tolist())
         assert our_set == ref_set, f"GPU {g}: dispatch_token_idxs mismatch"
 
-    # ── Semantic consistency: expand_idx correctness ──
+    # -- Semantic consistency: expand_idx correctness --
     if ms > 0 and k > 0:
         token_ids = idxs // k
         expert_ids_sorted = topk_ids.view(-1)[idxs]
@@ -253,7 +253,7 @@ def test_fused_dedup_dispatch_m_zero():
     assert send_meta.sum() == 0
 
 
-# ── Unit tests for post-all-to-all fused kernels ──
+# -- Unit tests for post-all-to-all fused kernels --
 
 
 @pytest.mark.parametrize("ms,k,num_experts,ep_size", CONFIGS)

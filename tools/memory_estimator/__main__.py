@@ -37,11 +37,11 @@ def estimate_non_pytorch_bytes(parallel_cfg: ParallelismConfig) -> int:
     that is unavailable for model tensors.  Estimates are calibrated against
     real H100 measurements (pp=4, ep=8, dp=1, 32 GPUs):
 
-    Phase 1 — CUDA init:          ~0.52 GiB
-    Phase 2 — NCCL world group:   ~0.39 GiB
-    Phase 3 — Device mesh groups: ~1.00 GiB (pp, ep, dp process groups)
-    Phase 4 — FSDP + optimizer:   ~0.96 GiB (FSDP state, reduce-scatter buffers)
-    Phase 5 — First forward:      ~2.97 GiB (torch.compile codegen, cuBLAS workspace,
+    Phase 1 - CUDA init:          ~0.52 GiB
+    Phase 2 - NCCL world group:   ~0.39 GiB
+    Phase 3 - Device mesh groups: ~1.00 GiB (pp, ep, dp process groups)
+    Phase 4 - FSDP + optimizer:   ~0.96 GiB (FSDP state, reduce-scatter buffers)
+    Phase 5 - First forward:      ~2.97 GiB (torch.compile codegen, cuBLAS workspace,
               flash_attn workspace, NCCL all-to-all internal buffers)
     Total measured:                ~5.84 GiB
     """
@@ -160,7 +160,7 @@ def run_estimate(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PithTrain Memory Estimator — estimate peak GPU memory for DualPipeV training"
+        description="PithTrain Memory Estimator - estimate peak GPU memory for DualPipeV training"
     )
     parser.add_argument(
         "--model",

@@ -1,6 +1,4 @@
-"""
-PithTrain logging module.
-"""
+"""PithTrain logging module."""
 
 import logging
 import os
@@ -16,9 +14,7 @@ from pithtrain.config import SlottedDefault
 
 
 class StdoutLogger(logging.Logger):
-    """
-    Logger that prints to standard output.
-    """
+    """Logger that prints to standard output."""
 
     def __init__(self, name: str, level: int = 0):
         super().__init__(name, level)
@@ -47,72 +43,48 @@ class StdoutLogger(logging.Logger):
 
 @dataclass(init=False, slots=True)
 class LoggingWandbCfg(SlottedDefault):
-    """
-    Configuration for logging with Weights & Biases.
-    """
+    """Configuration for logging with Weights & Biases."""
 
     entity: str
-    """
-    The username or team name the runs are logged to.
-    """
+    """The username or team name the runs are logged to."""
 
     project: str
-    """
-    The name of the project under which this run will be logged.
-    """
+    """The name of the project under which this run will be logged."""
 
     name: str
-    """
-    A short display name for this run, which appears in the UI to help you identify it.
-    """
+    """A short display name for this run, which appears in the UI to help you identify it."""
 
     group: Optional[str] = None
-    """
-    A group name to organize related runs together.
-    """
+    """A group name to organize related runs together."""
 
 
 @dataclass(init=False, slots=True)
 class LoggingCfg(SlottedDefault):
-    """
-    Configuration for logging.
-    """
+    """Configuration for logging."""
 
     wandb: Optional[LoggingWandbCfg] = None
-    """
-    Configuration for logging with Weights & Biases.
-    """
+    """Configuration for logging with Weights & Biases."""
 
 
 @dataclass(init=False, slots=True)
 class LoggingCtx(SlottedDefault):
-    """
-    Context for logging.
-    """
+    """Context for logging."""
 
     stdout: StdoutLogger
-    """
-    Logger that prints to standard output.
-    """
+    """Logger that prints to standard output."""
 
     wandb: Optional[WandbRun] = None
-    """
-    Weights & Biases run.
-    """
+    """Weights & Biases run."""
 
 
 def setup_stdout(cfg: LoggingCfg, ctx: LoggingCtx) -> None:
-    """
-    Setup the stdout logger.
-    """
+    """Setup the stdout logger."""
     logger = StdoutLogger("pithtrain", logging.INFO)
     ctx.stdout = logger
 
 
 def setup_wandb(cfg: LoggingCfg, ctx: LoggingCtx) -> None:
-    """
-    Setup the WandB run.
-    """
+    """Setup the WandB run."""
     if ctx.wandb is not None:
         return
     if cfg.wandb is None:
@@ -155,9 +127,7 @@ def activate_wandb(cfg: object, ctx: object) -> None:
 
 @contextmanager
 def logging_context(cfg: object, ctx: object) -> Generator[LoggingCtx, None, None]:
-    """
-    Context manager for logging.
-    """
+    """Context manager for logging."""
     assert hasattr(cfg, "logging") and isinstance(cfg.logging, LoggingCfg)
     assert hasattr(ctx, "logging") and isinstance(ctx.logging, LoggingCtx)
     setup_stdout(cfg.logging, ctx.logging)

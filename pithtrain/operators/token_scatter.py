@@ -4,7 +4,7 @@ import torch
 import triton
 import triton.language as tl
 
-# ── Shared async D-to-H copy infrastructure ──
+# -- Shared async D-to-H copy infrastructure --
 # Used by both ScatterForGroupedGemm and moe_ep_prepare_dispatch to avoid
 # per-call cudaStreamSynchronize overhead from .tolist() / .item().
 
@@ -14,7 +14,7 @@ _GEMM_ALLOC_ALIGNMENT = 1024
 
 def get_pinned_buffer(name: str, numel: int, dtype: torch.dtype) -> torch.Tensor:
     # Cache pinned-memory buffers to avoid per-call allocation.
-    # Freeing a pinned tensor triggers cudaEventRecordWithFlags (~10 µs)
+    # Freeing a pinned tensor triggers cudaEventRecordWithFlags (~10 us)
     # in PyTorch's CachingHostAllocator.
     key = (name, dtype, numel)
     buf = _pinned_buffers.get(key)
@@ -183,7 +183,7 @@ class ScatterForGroupedGemm(torch.autograd.Function):
             * _GEMM_ALLOC_ALIGNMENT
         )
 
-        # Over-allocated output — padding rows zeroed inside the scatter kernel
+        # Over-allocated output - padding rows zeroed inside the scatter kernel
         # `output_tokens` will be zeroed inside the scatter kernel.
         output_tokens = torch.empty(
             (max_m_padded, hidden_size), device=device, dtype=sorted_tokens.dtype
@@ -276,7 +276,7 @@ class _PaddedIndexGather(torch.autograd.Function):
 
     Two optimizations over plain ``input[index]``:
 
-    1. **Avoids saving the input tensor** — the backward is a scatter-add that
+    1. **Avoids saving the input tensor** - the backward is a scatter-add that
        only needs the indices and the input shape, not the input values.
     2. **Pads the output allocation** to a fixed row alignment so the CUDA
        caching allocator sees consistent block sizes across micro-batches,
@@ -295,7 +295,7 @@ class _PaddedIndexGather(torch.autograd.Function):
         buf = input.new_empty(padded, *input.shape[1:])
         # Write directly into buf without materializing a temporary.
         torch.index_select(input, 0, index, out=buf[:actual])
-        return buf[:actual]  # view — keeps the padded allocation alive
+        return buf[:actual]  # view - keeps the padded allocation alive
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
@@ -359,7 +359,7 @@ def precompute_group_indices(grouped_mm_offs: torch.Tensor, M: int) -> Optional[
     Precompute per-row group indices for reuse across multiple grouped FP8 projections.
 
     Converts cumulative offsets to per-row group IDs, e.g.
-    ``grouped_mm_offs = [128, 256, 384, 512]`` → ``[0,0,...,1,1,...,2,2,...,3,3,...]``.
+    ``grouped_mm_offs = [128, 256, 384, 512]`` -> ``[0,0,...,1,1,...,2,2,...,3,3,...]``.
 
     Only needed on Hopper with the DeepGEMM backend; returns None otherwise.
     """

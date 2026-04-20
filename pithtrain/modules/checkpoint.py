@@ -25,9 +25,7 @@ INDEXED_EXPERT_RE = re.compile(r"(.*)\.experts\.(\d+)\.(.*)")
 
 
 def strip_prefix(key: str) -> str:
-    """
-    Strip module.{N}. prefix from a DualPipeV FQN.
-    """
+    """Strip module.{N}. prefix from a DualPipeV FQN."""
     return MODULE_PREFIX_RE.sub("", key)
 
 
@@ -51,9 +49,7 @@ def find_moe(key: str, named_modules: Dict[str, nn.Module]) -> Optional[nn.Modul
 
 
 def expert_range(mod: nn.Module) -> Tuple[int, int]:
-    """
-    Global expert index range [start, end) for this EP rank.
-    """
+    """Global expert index range [start, end) for this EP rank."""
     start = mod.ep_rank * mod.experts_per_rank
     return start, start + mod.experts_per_rank
 
@@ -76,9 +72,7 @@ def unwrap_dtensor_experts(value: Any, expected_n: int) -> Optional[Tuple[Any, i
     """
 
     def _info(dt: Any) -> Optional[Tuple[torch.Tensor, int, int]]:
-        """
-        Return (local_tensor, local_n, dp_offset) for a Shard(0) DTensor, or None.
-        """
+        """Return (local_tensor, local_n, dp_offset) for a Shard(0) DTensor, or None."""
         if not isinstance(dt, DTensor) or dt.dim() == 0 or dt.shape[0] != expected_n:
             return None
         if not dt.placements:
@@ -194,9 +188,7 @@ def repack(
 
 
 def unstack_optim(entry: Dict[str, Any], n: int, i: int) -> Dict[str, Any]:
-    """
-    Extract one expert slice from a stacked optimizer state entry.
-    """
+    """Extract one expert slice from a stacked optimizer state entry."""
     return {
         k: v[i] if isinstance(v, torch.Tensor) and v.dim() > 0 and v.shape[0] == n else v
         for k, v in entry.items()
@@ -204,16 +196,12 @@ def unstack_optim(entry: Dict[str, Any], n: int, i: int) -> Dict[str, Any]:
 
 
 def restack_tensors(by_idx: Dict[int, torch.Tensor]) -> torch.Tensor:
-    """
-    Stack individual expert tensors back into one.
-    """
+    """Stack individual expert tensors back into one."""
     return torch.stack([v for _, v in sorted(by_idx.items())])
 
 
 def restack_optim(by_idx: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Stack individual expert optimizer state entries back into one.
-    """
+    """Stack individual expert optimizer state entries back into one."""
     items = sorted(by_idx.items())
     sample = items[0][1]
     return {
@@ -227,16 +215,12 @@ def restack_optim(by_idx: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
 def to_canonical_model(
     state_dict: Dict[str, torch.Tensor], model: nn.Module
 ) -> Dict[str, torch.Tensor]:
-    """
-    Canonicalize model state: strip module prefix, unstack experts.
-    """
+    """Canonicalize model state: strip module prefix, unstack experts."""
     return unpack(state_dict, dict(model.named_modules()), lambda v, n, i: v[i])
 
 
 def to_canonical_optim(optim_state: Dict, model: nn.Module) -> Dict:
-    """
-    Canonicalize optimizer state: strip module prefix, unstack expert states.
-    """
+    """Canonicalize optimizer state: strip module prefix, unstack expert states."""
     state = unpack(optim_state["state"], dict(model.named_modules()), unstack_optim)
     params = list(state.keys())
     param_groups = []
@@ -287,9 +271,7 @@ def rewrap_dtensor_experts(result: Dict[str, Any], model: nn.Module) -> None:
 def to_localized_model(
     canonical: Dict[str, torch.Tensor], model: nn.Module
 ) -> Dict[str, torch.Tensor]:
-    """
-    Localize model state: remap FQNs to this rank's local keys, restack experts.
-    """
+    """Localize model state: remap FQNs to this rank's local keys, restack experts."""
     named_modules = dict(model.named_modules())
     model_keys = set(model.state_dict().keys())
     fqn_map = {strip_prefix(k): k for k in model_keys}

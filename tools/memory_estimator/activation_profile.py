@@ -27,9 +27,9 @@ class TokenCounts:
     # Corrected MLP dimensions (used for stage 3 activation sizing):
     # With EP, each rank processes a different microbatch and exchanges tokens
     # via all-to-all.  Each rank receives tokens from all ep_size source ranks,
-    # yielding ≈ m * k total (token, expert) pairs on the receiving rank.
+    # yielding ~= m * k total (token, expert) pairs on the receiving rank.
     m_sorted: int  # total dedup tokens on sending side (= m_dedup * ep_size)
-    m_expanded: int  # total (token, expert) pairs after expansion (≈ m * k)
+    m_expanded: int  # total (token, expert) pairs after expansion (~= m * k)
 
 
 def compute_token_counts(
@@ -78,7 +78,7 @@ def compute_token_counts(
     # Each EP rank processes a different microbatch (EP acts as data parallelism
     # for non-expert parts).  The all-to-all gathers tokens from all ep_size
     # sources, each contributing its share.  The total expanded pairs on the
-    # receiving rank ≈ m * k.
+    # receiving rank ~= m * k.
     #
     # Routing variance: finite-sample randomness in the router causes the
     # worst-case layer to have ~20% more expanded tokens than the uniform
@@ -143,24 +143,24 @@ class ActivationEstimator:
         # === Stage boundary records ===
         # Each .detach().requires_grad_() at a stage boundary creates a tensor
         # that shares storage with the previous stage's output.  We count each
-        # unique tensor ONCE — the outs from the producing stage.  The next
+        # unique tensor ONCE - the outs from the producing stage.  The next
         # stage's args.X is just a detached alias (same storage, 0 extra bytes).
         #
         # s1.args.hidden shares storage with prev layer's s5.outs.hidden_states
-        # (or prolog output for the first layer).  NOT counted here — already
+        # (or prolog output for the first layer).  NOT counted here - already
         # counted in the producing stage.
         #
         # s1.outs.sorted_tokens: FREED at stage3 start via deferred_free
         # (overlap.py: ctx.fwd_comm_deferred_free.append(sorted_tokens)).
-        # Does NOT persist beyond the layer — not counted.
+        # Does NOT persist beyond the layer - not counted.
         #
         # s2.outs.gathered_tokens: FREED immediately in stage3_f
         # (execution.py: gathered_tokens.untyped_storage().resize_(0) when ep>1).
-        # Does NOT persist — not counted.
+        # Does NOT persist - not counted.
         #
         # s3.outs.moe_outs: FREED at stage5 start via deferred_free
         # (overlap.py: ctx.fwd_comm_deferred_free.append(s3.outs.moe_outs)).
-        # Does NOT persist beyond the layer — not counted.
+        # Does NOT persist beyond the layer - not counted.
 
         # Persistent stage 1 outs:
         records.add(f"{prefix}.s1.outs.topk_weight", (m, k), "fp32")
@@ -172,26 +172,26 @@ class ActivationEstimator:
         # layer's hidden_states). NOT counted to avoid double-counting.
         autograd.add(f"{prefix}.s1.ag.qkv_proj_input", (B, S, H), "bf16")
         # Flash Attention 4 saves Q, K, V, O, and softmax_lse for backward.
-        # K, V are at nkv heads (no GQA expansion — FA4 handles GQA internally).
+        # K, V are at nkv heads (no GQA expansion - FA4 handles GQA internally).
         autograd.add(f"{prefix}.s1.ag.flash_Q", (B, S, nheads, hd), "bf16")
         autograd.add(f"{prefix}.s1.ag.flash_K", (B, S, nkv, hd), "bf16")
         autograd.add(f"{prefix}.s1.ag.flash_V", (B, S, nkv, hd), "bf16")
         autograd.add(f"{prefix}.s1.ag.flash_O", (B, S, nheads, hd), "bf16")
         autograd.add(f"{prefix}.s1.ag.flash_lse", (B, nheads, S), "fp32")
-        # NOTE: o_proj_input = flash_O.reshape(B, S, nheads*hd) — view shares
+        # NOTE: o_proj_input = flash_O.reshape(B, S, nheads*hd) - view shares
         # storage with flash_O.  NOT counted to avoid double-counting.
         autograd.add(f"{prefix}.s1.ag.post_attn_ln_input", (B, S, H), "bf16")
         # Gate (router) input: nn.Linear saves input for weight grad (bf16).
         autograd.add(f"{prefix}.s1.ag.gate_input", (m, H), "bf16")
 
-        # Stage 3 autograd (forward_mlp — not compiled)
+        # Stage 3 autograd (forward_mlp - not compiled)
         #
         # The MLP operates at the SCATTERED dimension:
         #   m_scattered = m_expanded + experts_per_rank * 127  (GEMM 128-row alignment)
         #
         # With EP, each rank processes a different microbatch.  The all-to-all
         # gathers tokens from all ep_size sources.  After expand_idx
-        # (restoring per-expert entries), the total pairs ≈ m * k.  After
+        # (restoring per-expert entries), the total pairs ~= m * k.  After
         # scatter_for_grouped_gemm (padding for grouped GEMM alignment), the M
         # dimension = m_scattered.
         experts_per_rank = self.model_cfg.num_experts // ep_size
@@ -216,7 +216,7 @@ class ActivationEstimator:
         # Stage 4: combine all-to-all output (reverse of dispatch).
         # Output = results sent back to source ranks at m_times_k dimension.
         # Stored as s5.args.moe_outs; also saved by forward_aggregate autograd
-        # (shared storage — counted once here in records, not in autograd).
+        # (shared storage - counted once here in records, not in autograd).
         records.add(f"{prefix}.s5.args.combine_output", (m_times_k, H), "bf16")
 
         # Stage 5 outs
@@ -243,7 +243,7 @@ class ActivationEstimator:
         records = MemoryBucket(f"{prefix} records")
         autograd = MemoryBucket(f"{prefix} autograd")
 
-        # Dense layer records — deduplicated (see MoE comments above)
+        # Dense layer records - deduplicated (see MoE comments above)
         records.add(f"{prefix}.s1.args.hidden", (B, S, H), "bf16")
         records.add(f"{prefix}.s1.outs.sorted_tokens", (B * S, H), "bf16")
         records.add(f"{prefix}.s1.outs.residual", (B, S, H), "bf16")

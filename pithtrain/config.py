@@ -1,6 +1,4 @@
-"""
-PithTrain base classes.
-"""
+"""PithTrain base classes."""
 
 from dataclasses import MISSING, asdict, fields
 from pathlib import Path

@@ -1,6 +1,4 @@
-"""
-Pretrain DeepSeek-V2-Lite with 2-way pipeline parallelism and 2-way expert parallelism.
-"""
+"""Pretrain DeepSeek-V2-Lite with 2-way pipeline parallelism and 2-way expert parallelism."""
 
 from pathlib import Path
 

@@ -392,13 +392,13 @@ class GptOssAttention(nn.Module):
         value_states = value_states.transpose(1, 2)
 
         # Attention sinks via post-hoc LSE renormalisation (HF / TorchTitan
-        # recipe).  The alternative — a score_mod closure over self.sinks with
-        # a virtual zero-valued KV row — forces flex_attention to self-compile
+        # recipe).  The alternative - a score_mod closure over self.sinks with
+        # a virtual zero-valued KV row - forces flex_attention to self-compile
         # and prevents the outer @torch.compile(fullgraph=True) from tracing
         # through, which leaves the whole attention block in eager mode.  The
         # renormalisation here is mathematically identical:
         #   softmax_with_sink(s)_i = exp(s_i) / (sum_j exp(s_j) + exp(sink))
-        #                          = softmax(s)_i * sigmoid(lse − sink)
+        #                          = softmax(s)_i * sigmoid(lse - sink)
         attn_output, aux = flex_attention(
             query_states,
             key_states,

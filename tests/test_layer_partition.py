@@ -11,7 +11,7 @@ def _silence(monkeypatch):
     monkeypatch.setattr("pithtrain.dualpipe.layer_partition.print_msg", lambda *a, **kw: None)
 
 
-# ── Invariant tests (sweep over many configs) ──
+# -- Invariant tests (sweep over many configs) --
 
 
 @pytest.mark.parametrize("S", range(1, 13), ids=lambda s: f"S={s}")
@@ -56,7 +56,7 @@ def test_dualpipev_phase_balance(S):
             )
 
 
-# ── Exact-value tests for production configs ──
+# -- Exact-value tests for production configs --
 
 
 def test_qwen3_30b_a3b_pp4():

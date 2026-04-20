@@ -256,7 +256,7 @@ class ScheduleSimulator:
 
         def weight_chunk(event_prefix: str) -> None:
             nonlocal wgrad_store_bytes
-            # Pops one batch of deferred wgrads — free the oldest module's worth
+            # Pops one batch of deferred wgrads - free the oldest module's worth
             # In practice, weight_chunk pops from a FIFO queue
             if wgrad_store_bytes > 0:
                 # Each pop frees one chunk's worth of wgrad from whichever module

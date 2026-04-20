@@ -1,6 +1,4 @@
-"""
-Download one shard of the DCLM corpus and tokenize with the DeepSeek-V2 model.
-"""
+"""Download one shard of the DCLM corpus and tokenize with the DeepSeek-V2 model."""
 
 from pathlib import Path
 

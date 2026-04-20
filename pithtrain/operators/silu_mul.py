@@ -14,7 +14,7 @@ The kernels here:
 - fuse the backward into one Triton kernel that recomputes ``silu`` /
   ``sigmoid`` on the fly (three loads, two stores).
 
-Only ``gate`` and ``up`` are saved for backward — ``silu(gate)`` is no longer
+Only ``gate`` and ``up`` are saved for backward - ``silu(gate)`` is no longer
 stored as an activation.
 """
 
@@ -61,9 +61,9 @@ def _silu_mul_bwd_kernel(
 ):
     """Compute ``grad_gate`` and ``grad_up`` element-wise in one pass.
 
-    With ``s = silu(gate)`` and ``σ = sigmoid(gate)``:
+    With ``s = silu(gate)`` and ``sigma = sigmoid(gate)``:
         grad_up   = grad_out * s
-        grad_gate = grad_out * up * σ * (1 + gate - s)
+        grad_gate = grad_out * up * sigma * (1 + gate - s)
     """
     block_start = tl.program_id(0).to(tl.int64) * BLOCK_SIZE
     offs = block_start + tl.arange(0, BLOCK_SIZE)

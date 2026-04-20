@@ -125,8 +125,8 @@ def _fused_rowwise_colwise_fp8_kernel(
     Colwise path: 128-row group, per-column scaling (axis=0 reduction).
 
     When WRITE_KMAJOR=True (Hopper grouped wgrad), the colwise FP8 output is
-    written directly in K-major flat layout — per-group (K_g, N) blocks are
-    transposed to (N, K_g) and concatenated — eliminating a separate transpose
+    written directly in K-major flat layout - per-group (K_g, N) blocks are
+    transposed to (N, K_g) and concatenated - eliminating a separate transpose
     kernel.  Colwise scales are written transposed: (N, M//128) instead of
     (M//128, N).  Requires block_to_group_ptr and cumsum_ptr (cumulative
     row counts without a leading zero, i.e. grouped_mm_offs directly).
@@ -305,7 +305,7 @@ def fused_rowwise_kmajor_cast_to_fp8(
     kmajor_fp8 = torch.empty(M * N, dtype=torch.float8_e4m3fn, device=x.device)
     kmajor_scale = torch.empty((N, num_row_groups), dtype=torch.float32, device=x.device)
 
-    # Precompute per-block group mapping (tiny — num_row_groups elements)
+    # Precompute per-block group mapping (tiny - num_row_groups elements)
     block_starts = torch.arange(0, M, BLOCK, device=x.device, dtype=torch.int64)
     block_to_group = torch.searchsorted(
         grouped_mm_offs.to(torch.int64),

@@ -1,6 +1,4 @@
-"""
-Download one shard of the DCLM corpus and tokenize with the Qwen3 model.
-"""
+"""Download one shard of the DCLM corpus and tokenize with the Qwen3 model."""
 
 from pathlib import Path
 

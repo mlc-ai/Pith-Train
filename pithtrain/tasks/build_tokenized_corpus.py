@@ -42,52 +42,34 @@ from pithtrain.modules.logging import LoggingCfg, LoggingCtx, StdoutLogger, logg
 
 @dataclass(init=False, slots=True)
 class BuildTokenizedCorpusCfg(SlottedDefault):
-    """
-    User-provided settings for build_tokenized_corpus.
-    """
+    """User-provided settings for build_tokenized_corpus."""
 
     tokenizer_name: str
-    """
-    Hugging Face tokenizer model name.
-    """
+    """Hugging Face tokenizer model name."""
 
     source_path: Path
-    """
-    Directory containing raw text files to tokenize.
-    """
+    """Directory containing raw text files to tokenize."""
 
     output_path: Path
-    """
-    Directory where tokenized output will be saved.
-    """
+    """Directory where tokenized output will be saved."""
 
     num_workers: int = field(default_factory=lambda: max(os.cpu_count() - 1, 1))
-    """
-    Number of parallel tokenization workers.
-    """
+    """Number of parallel tokenization workers."""
 
     logging: LoggingCfg = field(default_factory=LoggingCfg)
-    """
-    Logging configuration.
-    """
+    """Logging configuration."""
 
 
 @dataclass(init=False, slots=True)
 class BuildTokenizedCorpusCtx(SlottedDefault):
-    """
-    Runtime context for build_tokenized_corpus.
-    """
+    """Runtime context for build_tokenized_corpus."""
 
     logging: LoggingCtx = field(default_factory=LoggingCtx)
-    """
-    Active logging context.
-    """
+    """Active logging context."""
 
 
 def read_file(path: Path):
-    """
-    Yield text from a file based on its extension.
-    """
+    """Yield text from a file based on its extension."""
     match "".join(path.suffixes):
         case ".jsonl.zst" | ".jsonl.zstd":
             with zstd.open(path, mode="rt") as f:
@@ -211,9 +193,7 @@ def leader(queue: Queue, psize: int, cfg: BuildTokenizedCorpusCfg, npath: int):
 
 
 def launch(cfg: BuildTokenizedCorpusCfg):
-    """
-    Launch the tokenization process.
-    """
+    """Launch the tokenization process."""
     with ExitStack() as stack:
         ctx = BuildTokenizedCorpusCtx()
         stack.enter_context(logging_context(cfg, ctx))
