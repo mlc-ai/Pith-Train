@@ -1,6 +1,4 @@
-"""
-PithTrain training module.
-"""
+"""PithTrain training module."""
 
 import gc
 import math
@@ -33,44 +31,28 @@ from .distributed import DistributedCtx
 @dataclass(init=False, slots=True)
 class TrainingCfg(SlottedDefault):
     dataset: Path
-    """
-    The root directory hosting the tokenized dataset.
-    """
+    """The root directory hosting the tokenized dataset."""
 
     sequence_length: int
-    """
-    The sequence length for each training sample.
-    """
+    """The sequence length for each training sample."""
 
     seed: int = 1234
-    """
-    The random seed for reproducibility.
-    """
+    """The random seed for reproducibility."""
 
     min_lr: float
-    """
-    The minimum learning rate to start with and decay to.
-    """
+    """The minimum learning rate to start with and decay to."""
 
     max_lr: float
-    """
-    The maximum learning rate.
-    """
+    """The maximum learning rate."""
 
     warmup_steps: int
-    """
-    The number of steps for linear warmup of the learning rate.
-    """
+    """The number of steps for linear warmup of the learning rate."""
 
     max_steps: int
-    """
-    The maximum number of training steps.
-    """
+    """The maximum number of training steps."""
 
     micro_batch_size: int
-    """
-    The size of each micro-batch used during training.
-    """
+    """The size of each micro-batch used during training."""
 
     global_batch_size: int
     """
@@ -80,14 +62,10 @@ class TrainingCfg(SlottedDefault):
     """
 
     optimizer: Literal["Adam"]
-    """
-    The optimizer to use during training.
-    """
+    """The optimizer to use during training."""
 
     scheduler: Literal["CosineAnnealing", "Constant"]
-    """
-    The learning rate scheduler to use after linear warmup.
-    """
+    """The learning rate scheduler to use after linear warmup."""
 
     model: Union[
         Path,
@@ -130,12 +108,12 @@ class TrainingCfg(SlottedDefault):
     """
     Load balance loss strategy for MoE layers.
 
-    * "micro-batch" — Micro-batch loss computed per micro-batch
+    * "micro-batch" - Micro-batch loss computed per micro-batch
       (https://arxiv.org/abs/2101.03961).
-    * "global-batch" — Global-batch loss that synchronises expert selection
+    * "global-batch" - Global-batch loss that synchronises expert selection
       frequencies across DP x EP ranks and accumulates across gradient
       accumulation steps (https://arxiv.org/abs/2501.11873).
-    * "sequence" — Sequence-level loss computed independently per sequence
+    * "sequence" - Sequence-level loss computed independently per sequence
       then averaged over the batch (https://arxiv.org/abs/2405.04434).
     """
 
@@ -197,29 +175,19 @@ class TrainingCfg(SlottedDefault):
 @dataclass(init=False, slots=True)
 class TrainingCtx:
     dataset: ConcatDataset
-    """
-    The concatenated dataset for training.
-    """
+    """The concatenated dataset for training."""
 
     model: DualPipeV
-    """
-    The model being trained.
-    """
+    """The model being trained."""
 
     optimizer: Optimizer
-    """
-    The optimizer used for training.
-    """
+    """The optimizer used for training."""
 
     scheduler: LRScheduler
-    """
-    The learning rate scheduler used for training.
-    """
+    """The learning rate scheduler used for training."""
 
     step: int
-    """
-    The current training step.
-    """
+    """The current training step."""
 
 
 def setup_dataset(cfg: TrainingCfg, ctx: TrainingCtx) -> None:
@@ -433,9 +401,7 @@ def setup_scheduler(cfg: TrainingCfg, ctx: TrainingCtx) -> None:
 
 @contextmanager
 def training_context(cfg: object, ctx: object) -> Generator[TrainingCtx, None, None]:
-    """
-    Context manager for training.
-    """
+    """Context manager for training."""
     assert hasattr(cfg, "training") and isinstance(cfg.training, TrainingCfg)
     assert hasattr(ctx, "training") and isinstance(ctx.training, TrainingCtx)
     assert hasattr(ctx, "distributed") and isinstance(ctx.distributed, DistributedCtx)

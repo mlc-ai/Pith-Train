@@ -100,9 +100,9 @@ def print_summary(
     print()
 
     if headroom < 0:
-        print(f"  *** STATUS: OOM — exceeds GPU capacity by {format_bytes(-headroom)} ***")
+        print(f"  *** STATUS: OOM - exceeds GPU capacity by {format_bytes(-headroom)} ***")
     elif headroom_pct < 5:
-        print("  *** STATUS: TIGHT — less than 5% headroom ***")
+        print("  *** STATUS: TIGHT - less than 5% headroom ***")
     else:
         print("  STATUS: OK")
     print()
@@ -385,7 +385,7 @@ def print_suggestions(result: ScheduleResult, gpu_memory_gb: float) -> None:
         idx += 1
 
     if not suggestions:
-        print("  No specific optimization suggestions — memory usage looks balanced.")
+        print("  No specific optimization suggestions - memory usage looks balanced.")
     else:
         for s in suggestions:
             print(f"  {s}")

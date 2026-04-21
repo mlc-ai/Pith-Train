@@ -1,6 +1,4 @@
-"""
-PithTrain distributed module.
-"""
+"""PithTrain distributed module."""
 
 import atexit
 import os
@@ -15,9 +13,7 @@ from pithtrain.config import SlottedDefault
 
 @dataclass(init=False, slots=True)
 class DistributedCfg(SlottedDefault):
-    """
-    Configuration for distributed runtime.
-    """
+    """Configuration for distributed runtime."""
 
     pipeline_parallel_size: int = 1
     """
@@ -54,74 +50,46 @@ class DistributedCfg(SlottedDefault):
 
 @dataclass(init=False, slots=True)
 class DistributedCtx:
-    """
-    Context for distributed runtime.
-    """
+    """Context for distributed runtime."""
 
     rank: int
-    """
-    Global rank of the current process.
-    """
+    """Global rank of the current process."""
 
     world_size: int
-    """
-    Total number of workers in the distributed job.
-    """
+    """Total number of workers in the distributed job."""
 
     local_rank: int
-    """
-    Local rank of the current process on the node.
-    """
+    """Local rank of the current process on the node."""
 
     local_world_size: int
-    """
-    Number of workers on the current node.
-    """
+    """Number of workers on the current node."""
 
     dp_rank: int
-    """
-    Rank of the current process in the data parallel group.
-    """
+    """Rank of the current process in the data parallel group."""
 
     dp_size: int
-    """
-    Size of the data parallel group.
-    """
+    """Size of the data parallel group."""
 
     pp_rank: int
-    """
-    Rank of the current process in the pipeline parallel group.
-    """
+    """Rank of the current process in the pipeline parallel group."""
 
     pp_size: int
-    """
-    Size of the pipeline parallel group.
-    """
+    """Size of the pipeline parallel group."""
 
     cp_rank: int
-    """
-    Rank of the current process in the context parallel group.
-    """
+    """Rank of the current process in the context parallel group."""
 
     cp_size: int
-    """
-    Size of the context parallel group.
-    """
+    """Size of the context parallel group."""
 
     ep_rank: int
-    """
-    Rank of the current process in the expert parallel group.
-    """
+    """Rank of the current process in the expert parallel group."""
 
     ep_size: int
-    """
-    Size of the expert parallel group.
-    """
+    """Size of the expert parallel group."""
 
     device_mesh: torch.distributed.DeviceMesh
-    """
-    Collection of process groups for multi-dimensional parallelism.
-    """
+    """Collection of process groups for multi-dimensional parallelism."""
 
 
 def setup_default_process_group(cfg: DistributedCfg, ctx: DistributedCtx) -> None:
@@ -157,10 +125,10 @@ def setup_device_mesh(cfg: DistributedCfg, ctx: DistributedCtx) -> None:
 
     Mesh shape: ``(PP, DP, CP, EP)``
 
-    1. Pipeline Parallel (PP) — outermost
+    1. Pipeline Parallel (PP) - outermost
     2. Data Parallel (DP)
-    3. Context Parallel (CP) — ring attention KV exchange
-    4. Expert Parallel (EP) — innermost, MoE all-to-all
+    3. Context Parallel (CP) - ring attention KV exchange
+    4. Expert Parallel (EP) - innermost, MoE all-to-all
     """
     ctx.ep_size = cfg.expert_parallel_size
     ctx.pp_size = cfg.pipeline_parallel_size
@@ -181,9 +149,7 @@ def setup_device_mesh(cfg: DistributedCfg, ctx: DistributedCtx) -> None:
 
 @contextmanager
 def distributed_context(cfg: object, ctx: object) -> Generator[DistributedCtx, None, None]:
-    """
-    Context manager for distributed runtime.
-    """
+    """Context manager for distributed runtime."""
     assert hasattr(cfg, "distributed") and isinstance(cfg.distributed, DistributedCfg)
     assert hasattr(ctx, "distributed") and isinstance(ctx.distributed, DistributedCtx)
     torch.backends.cuda.matmul.allow_tf32 = True

@@ -5,9 +5,7 @@ import torch.nn as nn
 
 
 class ForwardAttnOutput(NamedTuple):
-    """
-    Output from the forward_attn method of a decoder layer.
-    """
+    """Output from the forward_attn method of a decoder layer."""
 
     sorted_tokens: torch.Tensor
     moe_local_idxs: torch.Tensor
@@ -33,9 +31,7 @@ class DecoderLayerMlpProtocol(Protocol):
 
 
 class DecoderLayerProtocol(Protocol):
-    """
-    Protocol for a decoder layer in DualPipeV.
-    """
+    """Protocol for a decoder layer in DualPipeV."""
 
     idx: int
     mlp: DecoderLayerMlpProtocol
@@ -44,17 +40,13 @@ class DecoderLayerProtocol(Protocol):
         self,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Reference forward implementation for correctness validation.
-        """
+        """Reference forward implementation for correctness validation."""
 
     def forward_attn(
         self,
         hidden_states: torch.Tensor,
     ) -> ForwardAttnOutput:
-        """
-        LN + Attn + LN + Expert selection.
-        """
+        """LN + Attn + LN + Expert selection."""
 
     def forward_mlp(
         self,
@@ -62,9 +54,7 @@ class DecoderLayerProtocol(Protocol):
         expert_idxs: Optional[torch.Tensor] = None,
         expand_idx: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """
-        MLP forward.
-        """
+        """MLP forward."""
 
     def forward_aggregate(
         self,
@@ -73,15 +63,11 @@ class DecoderLayerProtocol(Protocol):
         topk_weight: Optional[torch.Tensor],
         residual: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Weighted expert output + residual connection.
-        """
+        """Weighted expert output + residual connection."""
 
 
 class ModelProtocol(Protocol):
-    """
-    Protocol for the DualPipeV model.
-    """
+    """Protocol for the DualPipeV model."""
 
     embed_tokens: Optional[nn.Module]
     norm: Optional[nn.Module]

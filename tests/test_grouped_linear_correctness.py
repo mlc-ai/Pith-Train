@@ -373,9 +373,7 @@ def _verify_scatter_result(sorted_tokens, expert_idxs, num_groups, out, reverse_
 
 
 def test_scatter_for_grouped_gemm():
-    """
-    Test scatter_for_grouped_gemm produces semantically correct results.
-    """
+    """Test scatter_for_grouped_gemm produces semantically correct results."""
     device = torch.device("cuda")
     dtype = torch.float32
 
@@ -423,9 +421,7 @@ def test_scatter_for_grouped_gemm():
 
 
 def test_scatter_for_grouped_gemm_edge_cases():
-    """
-    Test edge cases for scatter_for_grouped_gemm.
-    """
+    """Test edge cases for scatter_for_grouped_gemm."""
     device = torch.device("cuda")
     dtype = torch.float32
 

@@ -1,6 +1,4 @@
-"""
-Correctness tests for the fused clamped-SwiGLU operator used in gpt-oss.
-"""
+"""Correctness tests for the fused clamped-SwiGLU operator used in gpt-oss."""
 
 import pytest
 import torch
@@ -52,7 +50,7 @@ def test_clamped_swiglu_forward_backward(shape, dtype):
 
     # bf16/fp16 store each intermediate rounded; our fused kernel keeps
     # everything in fp32 until the final store, so it is strictly *more*
-    # accurate than the reference — loosen tolerance for the reference's noise.
+    # accurate than the reference - loosen tolerance for the reference's noise.
     atol, rtol = (5e-2, 1e-2) if dtype == torch.float16 else (3e-1, 5e-2)
     torch.testing.assert_close(out, out_ref, atol=atol, rtol=rtol)
 
@@ -93,7 +91,7 @@ def test_clamped_swiglu_saturated_gradient_is_zero():
     grad_gate = gate_up.grad[:, ::2]
     grad_up = gate_up.grad[:, 1::2]
 
-    # Gate: one-sided saturation. g > LIMIT ⇒ grad_g == 0.
+    # Gate: one-sided saturation. g > LIMIT => grad_g == 0.
     saturated_gate = gate_vals > LIMIT
     assert torch.all(grad_gate[saturated_gate] == 0)
 
@@ -103,7 +101,7 @@ def test_clamped_swiglu_saturated_gradient_is_zero():
 
 @requires_cuda
 def test_clamped_swiglu_matches_hf_reference_shape():
-    """Smoke test using gpt-oss-20b-like dims: 32 experts × 768-width tile."""
+    """Smoke test using gpt-oss-20b-like dims: 32 experts x 768-width tile."""
     torch.manual_seed(0)
     device = "cuda"
     dtype = torch.bfloat16

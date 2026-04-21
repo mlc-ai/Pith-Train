@@ -17,9 +17,7 @@ import torch
 
 
 class MemmapDataset:
-    """
-    Memory-mapped dataset backed by a packed .bin file of token IDs.
-    """
+    """Memory-mapped dataset backed by a packed .bin file of token IDs."""
 
     def __init__(self, path: Path, sequence_length: int):
         self.root = path.parent
@@ -47,9 +45,7 @@ class MemmapDataset:
 
 
 class ConcatDataset:
-    """
-    Concatenates multiple MemmapDatasets with global shuffling.
-    """
+    """Concatenates multiple MemmapDatasets with global shuffling."""
 
     OFFSETS = "offsets.npy"
     INDICES = "indices.npy"

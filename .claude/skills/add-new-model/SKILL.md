@@ -261,10 +261,11 @@ deadlocked all-to-all) — kill, don't raise.
 
 **Skip this phase entirely** if the user only wants training from scratch
 (no real released weights involved). The generic path in
-`convert_checkpoint.py` already handles un-quantized, un-transposed HF
-checkpoints — Qwen3 and DeepSeek-V2 work with no model-specific branch.
+`pithtrain/tasks/convert_checkpoint/_core.py` already handles
+un-quantized, un-transposed HF checkpoints — Qwen3 and DeepSeek-V2 work
+with no model-specific converter.
 
-**Add a branch only if one of the following applies:**
+**Add a converter only if one of the following applies:**
 
 - The released weights are quantized (MXFP4, GPTQ, AWQ, FP8, etc.).
 - The HF live tensor layout differs from your model's in-memory layout
@@ -276,10 +277,13 @@ checkpoints — Qwen3 and DeepSeek-V2 work with no model-specific branch.
 
 **Load `reference/checkpoint.md` before starting this phase.**
 
-1. Implement `_hf2dcp_<model>` in `pithtrain/tasks/convert_checkpoint.py`.
-   Gate on a `_is_<model>` probe of `config.json` `model_type`.
-2. Implement `_dcp2hf_<model>` (or extend `_stack_experts`) at the same
-   time — the round-trip test is what catches layout bugs.
+1. Create `pithtrain/tasks/convert_checkpoint/<model>.py` with a
+   `<Model>Converter` class (see `gpt_oss.py` for the pattern).
+   Implement `detect_hf` / `detect_dcp` probes, `hf2dcp`, and
+   `postprocess_canonical`.
+2. Register the converter instance in
+   `pithtrain/tasks/convert_checkpoint/_registry.py` (append to
+   `CONVERTERS`).
 3. Write an `examples/convert_checkpoint/<model>/script.py` that
    downloads + converts. Mirror
    `examples/convert_checkpoint/gpt-oss-20b/script.py`.

@@ -1,14 +1,15 @@
 # Checkpoint Conversion (hf2dcp / dcp2hf)
 
-**First: decide whether you need a model-specific converter branch at
-all.** The generic path in `pithtrain/tasks/convert_checkpoint.py`
+**First: decide whether you need a model-specific converter at all.**
+The generic path in `pithtrain/tasks/convert_checkpoint/_core.py`
 handles un-quantized, un-transposed HF checkpoints — Qwen3 and
 DeepSeek-V2 round-trip through it with no model-specific code.
 
-## When to add a model-specific branch
+## When to add a model-specific converter
 
-Add a `_hf2dcp_<model>` / `_dcp2hf_<model>` branch **only if** one of
-these applies:
+Add a new `<Model>Converter` class in
+`pithtrain/tasks/convert_checkpoint/<model>.py` **only if** one of these
+applies:
 
 1. **Quantized released weights** — MXFP4, GPTQ, AWQ, FP8, bitsandbytes,
    etc. Need to dequantize to BF16 before writing DCP.
@@ -79,8 +80,8 @@ Adapt from:
 - The model's release repo (OpenAI, Qwen, etc.)
 - TorchTitan if it has a reference
 
-See `_dequantize_mxfp4` in `pithtrain/tasks/convert_checkpoint.py` for
-the MXFP4 reference.
+See `_dequantize_mxfp4` in
+`pithtrain/tasks/convert_checkpoint/gpt_oss.py` for the MXFP4 reference.
 
 ### Step 4 — Verify against HF's live dequant
 
@@ -111,10 +112,54 @@ Norms matching but element-wise differing means you have a
 transpose / interleave bug. **Norms are invariant under transposition;
 norm-only checks miss the whole class of layout bugs.**
 
-## `hf2dcp` structure
+## Where the code lives
+
+`pithtrain/tasks/convert_checkpoint/` is a package:
+
+```
+pithtrain/tasks/convert_checkpoint/
+    __init__.py     # public API: ConvertCheckpointCfg, ConvertCheckpointCtx, launch
+    _core.py        # generic hf2dcp / dcp2hf + dispatcher + launch
+    _registry.py    # ModelConverter Protocol + explicit CONVERTERS list
+    gpt_oss.py      # GptOssConverter (MXFP4 dequant + stacked-expert transpose)
+```
+
+A model-specific converter is a class with four methods (see
+`_registry.ModelConverter`):
 
 ```python
-def _hf2dcp_<model>(load_path: Path, save_path: Path, stdout: Logger) -> None:
+class ModelConverter(Protocol):
+    name: str
+    def detect_hf(self, load_path: Path) -> bool: ...
+    def detect_dcp(self, metadata) -> bool: ...
+    def hf2dcp(self, load_path: Path, save_path: Path, stdout: Logger) -> None: ...
+    def postprocess_canonical(
+        self, canonical: Dict[str, torch.Tensor], stdout: Logger
+    ) -> Dict[str, torch.Tensor]: ...
+```
+
+Generic `hf2dcp` delegates entirely to `converter.hf2dcp` when
+`detect_hf` matches. Generic `dcp2hf` always runs the load +
+canonicalization + shard-write; the converter only supplies
+`postprocess_canonical` (stack + transpose) when `detect_dcp` matches.
+If no converter matches, the generic path runs untouched.
+
+## Adding a new converter
+
+1. Create `pithtrain/tasks/convert_checkpoint/<model>.py` with a
+   `<Model>Converter` class implementing the four methods.
+2. Append an instance to `CONVERTERS` in `_registry.py`:
+   ```python
+   from .<model> import <Model>Converter
+   CONVERTERS: List[ModelConverter] = [GptOssConverter(), <Model>Converter()]
+   ```
+   Order matters only if two converters could both match — keep the list
+   small and unambiguous.
+
+## `hf2dcp` method structure
+
+```python
+def hf2dcp(self, load_path: Path, save_path: Path, stdout: Logger) -> None:
     # 1. Load raw safetensors into a dict on CPU
     with open(load_path / "model.safetensors.index.json") as f:
         weight_map = json.load(f)["weight_map"]
@@ -162,19 +207,18 @@ def _hf2dcp_<model>(load_path: Path, save_path: Path, stdout: Logger) -> None:
     dcp.save({"app": {"model": model_state_dict}}, checkpoint_id=save_path, no_dist=True)
 ```
 
-Register the branch in the top-level `hf2dcp` via an `_is_<model>` probe
-that reads `load_path/config.json` and checks `model_type`.
+`detect_hf` typically reads `load_path/config.json` and checks
+`model_type`.
 
-## `dcp2hf` structure
+## `postprocess_canonical` structure
 
-The generic path stacks per-expert keys and adds `model.` prefix. What
-a model-specific branch adds is the **layout transpose** from our
-`[E, out, in]` storage to HF's live `[E, in, out]`.
-
-Extend `_stack_experts` with a model-aware gate:
+The generic `dcp2hf` calls this with the un-prefixed DCP state_dict and
+expects back a dict with stacked / transposed keys to match HF's live
+layout. What a model-specific converter adds is the **layout transpose**
+from our `[E, out, in]` storage to HF's live `[E, in, out]`:
 
 ```python
-def _stack_experts(state_dict, stdout):
+def postprocess_canonical(self, canonical, stdout):
     _WEIGHT_KEYS = (".mlp.experts.gate_up_proj", ".mlp.experts.down_proj")
     # per-expert indexed → stacked
     ...
@@ -187,11 +231,10 @@ def _stack_experts(state_dict, stdout):
     return result
 ```
 
-The `_is_<model>_dcp(metadata)` probe decides whether to call
-`_stack_experts` — e.g. `_is_gpt_oss_dcp` checks for `gate_up_proj`
-keys in the metadata. For non-quantized models (Qwen3, DeepSeek-V2),
-`_is_<model>_dcp` returns False and the generic path writes the DCP
-as-is.
+`detect_dcp` inspects the DCP metadata — e.g. `GptOssConverter.detect_dcp`
+checks for `gate_up_proj` keys. For non-quantized / non-stacked models
+(Qwen3, DeepSeek-V2), there is no converter at all and the generic path
+writes the DCP as-is.
 
 ## The round-trip validation
 
@@ -315,8 +358,8 @@ model even builds.
       weight against HF's live dequant.
 - [ ] `hf2dcp` splits stacked expert tensors into per-expert indexed
       keys; nothing else renamed.
-- [ ] `dcp2hf` (or `_stack_experts`) stacks back, transposes 3-D
-      weights, adds `model.` prefix.
+- [ ] `dcp2hf` (or `postprocess_canonical`) stacks back, transposes
+      3-D weights, adds `model.` prefix.
 - [ ] Round-trip: strip `quantization_config` from output config,
       element-wise compare to HF's BF16 dequant, `max_abs_diff == 0`.
 - [ ] `_load_dcp_canonical` allocates on CPU.

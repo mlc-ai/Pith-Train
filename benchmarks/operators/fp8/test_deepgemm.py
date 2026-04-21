@@ -4,8 +4,8 @@ Benchmark DeepGEMM FP8 linear layers vs BF16 baselines.
 Run all benchmarks:
     python3 -m benchmarks.operators.fp8.test_deepgemm
 
-Section 1 — Non-grouped: FP8Linear vs Linear
-Section 2 — Grouped: FP8GroupLinear vs GroupLinear
+Section 1 - Non-grouped: FP8Linear vs Linear
+Section 2 - Grouped: FP8GroupLinear vs GroupLinear
 
 Forward FLOPS:   2*M*N*K
 Backward FLOPS:  4*M*N*K  (dgrad: 2MNK, wgrad: 2MNK)
@@ -397,7 +397,7 @@ def _format_metrics_multi(m: Metrics, has_te: bool) -> str:
 
 def main() -> None:
     if not HAS_TE:
-        print("WARNING: transformer_engine not found — TE columns will be omitted.")
+        print("WARNING: transformer_engine not found - TE columns will be omitted.")
 
     te_tag = " vs TE FP8" if HAS_TE else ""
 

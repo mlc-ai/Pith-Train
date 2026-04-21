@@ -227,7 +227,7 @@ def test_fp8_group_linear_forward(num_groups, in_features, out_features):
 
     assert out_fp8.shape == out_bf16.shape
     # scatter_for_grouped_gemm now returns exactly-sized tensors (no over-allocation),
-    # so all rows are valid — compare full output directly.
+    # so all rows are valid - compare full output directly.
     diff = calc_diff(out_fp8, out_bf16)
     assert diff < ERR_THRESHOLD, f"diff = {diff}"
 
@@ -269,7 +269,7 @@ def test_fp8_group_linear_backward():
     bf16_gl(x_bf16, grouped_mm_offs).backward(grad)
     fp8_gl(x_fp8, grouped_mm_offs, ks=ks, ks_tensor=ks_tensor, group_indices=gi).backward(grad)
 
-    # Input grad check — tensors are exactly sized (no over-allocation)
+    # Input grad check - tensors are exactly sized (no over-allocation)
     assert x_fp8.grad is not None
     diff = calc_diff(x_fp8.grad, x_bf16.grad)
     assert diff < ERR_THRESHOLD, f"input grad diff = {diff}"

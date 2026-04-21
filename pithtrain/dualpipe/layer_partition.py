@@ -25,9 +25,9 @@ def layer_partition(num_layers: int, num_stages: int, verbose: bool = True) -> L
     Parameters
     ----------
     num_layers : int
-        Total number of decoder layers (must be ≥ num_stages).
+        Total number of decoder layers (must be >= num_stages).
     num_stages : int
-        Number of pipeline stages (= 2 × pp_size).
+        Number of pipeline stages (= 2 x pp_size).
 
     Returns
     -------
@@ -41,7 +41,7 @@ def layer_partition(num_layers: int, num_stages: int, verbose: bool = True) -> L
     base, remainder = divmod(num_layers, num_stages)
     layers = [base] * num_stages
 
-    # ── Distribute remainder ──
+    # -- Distribute remainder --
     for _ in range(remainder):
         min_val = min(layers)
         best = None
@@ -76,7 +76,7 @@ def layer_partition(num_layers: int, num_stages: int, verbose: bool = True) -> L
 
     if verbose:
         print_msg(
-            f"layer_partition: {num_layers} layers / {num_stages} stages → {layers}",
+            f"layer_partition: {num_layers} layers / {num_stages} stages -> {layers}",
             rank0_only=True,
         )
     return layers

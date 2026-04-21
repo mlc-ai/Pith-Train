@@ -1,6 +1,4 @@
-"""
-Pretrain Qwen3-30B-A3B with 2-way pipeline parallelism and 8-way expert parallelism.
-"""
+"""Pretrain Qwen3-30B-A3B with 2-way pipeline parallelism and 8-way expert parallelism."""
 
 from pathlib import Path
 

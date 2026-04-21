@@ -1,6 +1,4 @@
-"""
-Qwen/Qwen3-30B-A3B.
-"""
+"""Qwen/Qwen3-30B-A3B."""
 
 from dataclasses import fields
 from typing import List, Optional, Tuple
@@ -31,9 +29,7 @@ torch._dynamo.allow_in_graph(MoELoadBalanceLossInjector)
 
 
 class Qwen3MoeRotaryEmbedding(nn.Module):
-    """
-    Standard Rotary Position Embedding for Qwen3.
-    """
+    """Standard Rotary Position Embedding for Qwen3."""
 
     def __init__(
         self,
@@ -131,9 +127,7 @@ def apply_rotary_pos_emb(
 
 
 class Qwen3MoeMLP(nn.Module):
-    """
-    Standard dense MLP for Qwen3 (used when layer is not MoE).
-    """
+    """Standard dense MLP for Qwen3 (used when layer is not MoE)."""
 
     def __init__(
         self,
@@ -154,9 +148,7 @@ class Qwen3MoeMLP(nn.Module):
 
 
 class Qwen3MoeExperts(nn.Module):
-    """
-    Expert layers using grouped linear operations for efficient computation.
-    """
+    """Expert layers using grouped linear operations for efficient computation."""
 
     def __init__(
         self,
@@ -189,9 +181,7 @@ class Qwen3MoeExperts(nn.Module):
 
 
 class Qwen3MoeGate(nn.Module):
-    """
-    Top-K routing gate for MoE with softmax normalization.
-    """
+    """Top-K routing gate for MoE with softmax normalization."""
 
     def __init__(
         self,
@@ -220,7 +210,7 @@ class Qwen3MoeGate(nn.Module):
 
         Note: norm_topk_prob is applied before lb_loss injection. This is
         safe because MoELoadBalanceLossInjector is identity in forward and
-        ones_like(lb_loss) in backward — gradient on topk_weight is unchanged.
+        ones_like(lb_loss) in backward - gradient on topk_weight is unchanged.
 
         Returns
         -------
@@ -271,9 +261,7 @@ class Qwen3MoeGate(nn.Module):
 
 
 class Qwen3MoeMoE(nn.Module):
-    """
-    Mixture of Experts block with expert parallelism support.
-    """
+    """Mixture of Experts block with expert parallelism support."""
 
     def __init__(
         self,
@@ -316,9 +304,7 @@ class Qwen3MoeMoE(nn.Module):
         topk_ids: torch.Tensor,
         topk_weight: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        MoE inference with grouped GEMM.
-        """
+        """MoE inference with grouped GEMM."""
         assert self.ep_size == 1, "Reference implementation only supports ep_size=1"
         expert_idxs = topk_ids.view(-1)
         sorted_tokens = (
@@ -339,9 +325,7 @@ class Qwen3MoeMoE(nn.Module):
 
 
 class Qwen3MoeAttention(nn.Module):
-    """
-    Grouped Query Attention (GQA) for Qwen3 using Flash Attention.
-    """
+    """Grouped Query Attention (GQA) for Qwen3 using Flash Attention."""
 
     def __init__(
         self,
@@ -583,9 +567,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
         expert_idxs: Optional[torch.Tensor] = None,
         expand_idx: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """
-        MLP/Expert forward.
-        """
+        """MLP/Expert forward."""
         if isinstance(self.mlp, Qwen3MoeMLP):
             assert expert_idxs is None
             return self.mlp(gathered_tokens)
@@ -609,9 +591,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
         topk_weight: Optional[torch.Tensor],
         residual: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Weighted expert output + residual connection.
-        """
+        """Weighted expert output + residual connection."""
         if isinstance(self.mlp, Qwen3MoeMoE):
             if self.mlp.ep_size > 1:
                 assert moe_local_idxs is not None
@@ -847,9 +827,7 @@ class Qwen3MoeModel(nn.Module):
         loss: Optional[torch.Tensor],
         intermediate_tensors: IntermediateTensors,
     ):
-        """
-        Backward pass for the model.
-        """
+        """Backward pass for the model."""
         assert (dy is None) != (loss is None), "Either dy or loss should be provided"
 
         if loss is not None:

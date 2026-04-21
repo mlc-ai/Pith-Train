@@ -270,7 +270,7 @@ class ModelMemoryProfile:
             bucket.add(f"module[{module_idx}].lm_head.weight", (cfg.vocab_size, H), "bf16")
 
         # Rotary embedding buffers (not parameters but in memory)
-        # cos_cached, sin_cached: [max_pos, head_dim] — relatively small
+        # cos_cached, sin_cached: [max_pos, head_dim] - relatively small
         max_pos = (
             getattr(cfg, "max_position_embeddings", 40960)
             if hasattr(cfg, "max_position_embeddings")
@@ -297,7 +297,7 @@ class ModelMemoryProfile:
         both exist in memory for layers with reshard_after_forward=False.
 
         When FSDP mesh_size=1 (e.g., expert params with dp=1), the sharded copy
-        IS the unsharded copy — same tensor, no duplication. We skip these to
+        IS the unsharded copy - same tensor, no duplication. We skip these to
         avoid double-counting with params_unsharded.
         """
         bucket = MemoryBucket("FSDP sharded params (persistent)")

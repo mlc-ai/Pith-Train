@@ -1,6 +1,6 @@
 """
-Fused clamped SwiGLU used in OpenAI's gpt-oss: ``(uc + 1) * gc * sigmoid(α·gc)``
-with ``gc = min(gate, L)`` and ``uc = clamp(up, ±L)``, where ``gate`` and
+Fused clamped SwiGLU used in OpenAI's gpt-oss: ``(uc + 1) * gc * sigmoid(alpha * gc)``
+with ``gc = min(gate, L)`` and ``uc = clamp(up, +/-L)``, where ``gate`` and
 ``up`` are the even/odd columns of an interleaved ``gate_up [M, 2N]`` input.
 
 One Triton kernel each for forward and backward. Only ``gate_up`` is saved
@@ -57,8 +57,8 @@ def _clamped_swiglu_bwd_kernel(
     BLOCK_SIZE: tl.constexpr,
 ):
     # grad_uc = do * glu
-    # grad_gc = do * (uc + 1) * σ * (1 + α * gc * (1 - σ))
-    # Clamp-aware: grad_g = grad_gc if g ≤ L else 0; grad_u = grad_uc if |u| ≤ L else 0.
+    # grad_gc = do * (uc + 1) * sigma * (1 + alpha * gc * (1 - sigma))
+    # Clamp-aware: grad_g = grad_gc if g <= L else 0; grad_u = grad_uc if |u| <= L else 0.
     block_start = tl.program_id(0).to(tl.int64) * BLOCK_SIZE
     offs = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offs < n_elements

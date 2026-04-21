@@ -1,6 +1,4 @@
-"""
-deepseek-ai/DeepSeek-V2-Lite.
-"""
+"""deepseek-ai/DeepSeek-V2-Lite."""
 
 import math
 from dataclasses import fields

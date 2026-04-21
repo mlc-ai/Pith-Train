@@ -1,6 +1,4 @@
-"""
-PyTorch implementation of all-to-all communication operator.
-"""
+"""PyTorch implementation of all-to-all communication operator."""
 
 from typing import List
 

@@ -5,7 +5,7 @@ Splits the sequence across CP ranks. Each rank holds Q for its local chunk
 and passes K/V around a ring so every rank computes full causal attention.
 Partial outputs are combined with online softmax (log-sum-exp rescaling).
 
-Forward:  KV travels next→prev (send to rank+1, recv from rank-1).
+Forward:  KV travels next->prev (send to rank+1, recv from rank-1).
 Backward: re-uses saved KV chunks and passes the *combined* out/lse to
           flash_attn_backward so it reconstructs the correct global attention
           weights.  dK/dV contributions are redistributed to originating
@@ -58,7 +58,7 @@ def _online_softmax_combine(out1, lse1, out2, lse2):
     max_lse = torch.maximum(lse1, lse2)
     exp1 = torch.exp(lse1 - max_lse)
     exp2 = torch.exp(lse2 - max_lse)
-    # [B, H, S] → [B, S, H, 1] for broadcast with [B, S, H, D]
+    # [B, H, S] -> [B, S, H, 1] for broadcast with [B, S, H, D]
     e1 = exp1.transpose(1, 2).unsqueeze(-1)
     e2 = exp2.transpose(1, 2).unsqueeze(-1)
     new_out = (e1 * out1 + e2 * out2) / (e1 + e2)

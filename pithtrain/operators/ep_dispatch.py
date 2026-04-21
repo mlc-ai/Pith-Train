@@ -15,8 +15,8 @@ searchsorted, etc.) in moe_ep_prepare_dispatch with three Triton kernels:
     send_meta interleaved layout construction.
 
   Kernel 3 (_dedup_scatter_expand_kernel):
-    Pass 1 — dedup scatter: build dispatch_token_idxs + dedup_local_pos lookup table
-    Pass 2 — counting sort + expand_idx: produce idxs and expand_idx via table lookup
+    Pass 1 - dedup scatter: build dispatch_token_idxs + dedup_local_pos lookup table
+    Pass 2 - counting sort + expand_idx: produce idxs and expand_idx via table lookup
 
 Key algorithmic improvements over the PyTorch version:
   - Counting sort O(n) replaces argsort O(n log n)
@@ -51,8 +51,8 @@ def _dedup_bincount_kernel(
     """Atomic-free parallel bincount over topk_ids.
 
     Reads topk_ids (m, K) and produces two per-CTA histogram slices:
-      per_cta_expert_hist — token count per expert (for counting sort buckets).
-      per_cta_gpu_hist    — unique-token count per EP rank (dedup via bitmask).
+      per_cta_expert_hist - token count per expert (for counting sort buckets).
+      per_cta_gpu_hist    - unique-token count per EP rank (dedup via bitmask).
     """
     pid = tl.program_id(0)
     num_ctas = tl.num_programs(0)
@@ -129,13 +129,13 @@ def _reduce_and_prefix_sum_kernel(
     """Reduce per-CTA histograms and derive all metadata for kernel 3.
 
     Reads per-CTA expert and GPU histograms from kernel 1, and produces:
-      dedup_tokens_per_gpu — unique tokens per EP rank (cross-CTA sum).
-      tokens_per_ep_rank   — total tokens per EP rank (grouped expert sum).
-      expert_starts        — exclusive prefix sum over tokens_per_expert.
-      gpu_starts           — exclusive prefix sum over dedup_tokens_per_gpu.
-      dedup_counters       — zeroed atomic counters for kernel 3 dedup scatter.
-      sort_counters        — zeroed atomic counters for kernel 3 counting sort.
-      send_meta            — interleaved (ep_size, experts_per_rank + 1) layout
+      dedup_tokens_per_gpu - unique tokens per EP rank (cross-CTA sum).
+      tokens_per_ep_rank   - total tokens per EP rank (grouped expert sum).
+      expert_starts        - exclusive prefix sum over tokens_per_expert.
+      gpu_starts           - exclusive prefix sum over dedup_tokens_per_gpu.
+      dedup_counters       - zeroed atomic counters for kernel 3 dedup scatter.
+      sort_counters        - zeroed atomic counters for kernel 3 counting sort.
+      send_meta            - interleaved (ep_size, experts_per_rank + 1) layout
                              packing tokens_per_expert and dedup counts for a
                              single metadata all-to-all.
     """
@@ -195,9 +195,9 @@ def _dedup_scatter_expand_kernel(
     """Two-pass kernel: dedup scatter then counting sort with expand_idx.
 
     Reads topk_ids and prefix sums from kernel 2, and produces:
-      dispatch_token_idxs — token row indices grouped by EP rank (dedup).
-      idxs                — flat indices into topk_ids.view(-1), sorted by expert.
-      expand_idx          — per-slot local position within the token's dedup
+      dispatch_token_idxs - token row indices grouped by EP rank (dedup).
+      idxs                - flat indices into topk_ids.view(-1), sorted by expert.
+      expand_idx          - per-slot local position within the token's dedup
                             chunk, for reconstructing the full layout after
                             all-to-all.
     Uses dedup_local_pos as scratch for O(1) expand_idx lookup in pass 2.
@@ -207,7 +207,7 @@ def _dedup_scatter_expand_kernel(
     tok_offs = tok_start + tl.arange(0, BLOCK_M)
     mask = tok_offs < m
 
-    # ── Pass 1: Dedup scatter ──
+    # -- Pass 1: Dedup scatter --
     # For each token, determine unique GPUs and atomically assign
     # positions in dispatch_token_idxs. Record local positions in
     # dedup_local_pos for expand_idx lookup in Pass 2.
@@ -241,7 +241,7 @@ def _dedup_scatter_expand_kernel(
             mask=first_visit,
         )
 
-    # ── Pass 2: Counting sort + expand_idx ──
+    # -- Pass 2: Counting sort + expand_idx --
     for j in tl.static_range(K):
         expert_id = tl.load(
             topk_ids_ptr + tok_offs * stride_topk_m + j,
@@ -288,17 +288,17 @@ def fused_dedup_prepare_dispatch(
     dedup scatter + expand_idx computation.
 
     Returns:
-        tokens_per_ep_rank: (ep_size,) — total tokens routed to each EP rank.
-        dedup_tokens_per_gpu: (ep_size,) — unique tokens per EP rank (after dedup).
-        dispatch_token_idxs: (m * ep_size,) — over-allocated; first
+        tokens_per_ep_rank: (ep_size,) - total tokens routed to each EP rank.
+        dedup_tokens_per_gpu: (ep_size,) - unique tokens per EP rank (after dedup).
+        dispatch_token_idxs: (m * ep_size,) - over-allocated; first
             sum(dedup_tokens_per_gpu) entries are valid token row indices for
             the dedup dispatch gather.
-        idxs: (m * k,) — counting-sorted flat indices into topk_ids.view(-1),
+        idxs: (m * k,) - counting-sorted flat indices into topk_ids.view(-1),
             grouped by expert.
-        expand_idx: (m * k,) — for each sorted slot, the local position within
+        expand_idx: (m * k,) - for each sorted slot, the local position within
             that token's dedup chunk (used to reconstruct full layout from
             deduplicated tokens after all-to-all).
-        send_meta: (ep_size * (experts_per_rank + 1),) — interleaved metadata
+        send_meta: (ep_size * (experts_per_rank + 1),) - interleaved metadata
             for a single all-to-all that piggybacks dedup counts alongside
             per-expert token counts.  Viewed as (ep_size, experts_per_rank + 1):
               [:, :experts_per_rank]  = tokens_per_expert per rank
@@ -319,10 +319,10 @@ def fused_dedup_prepare_dispatch(
             send_meta,
         )
 
-    # ── Kernel 1: atomic-free bincount with per-CTA private histograms ──
+    # -- Kernel 1: atomic-free bincount with per-CTA private histograms --
     # Cap CTAs at 32: kernel 2 reduces per-CTA histograms in a single CTA with
     # NUM_CTAS as constexpr (fully unrolled), so more CTAs = more code size and
-    # register pressure.  32 × 1024 = 32K tokens already exceeds typical µ-batches.
+    # register pressure.  32 x 1024 = 32K tokens already exceeds typical micro-batches.
     BLOCK = 1024
     num_ctas = min(triton.cdiv(m, BLOCK), 32)
     # tl.histogram requires power-of-2 num_bins; +1 for the sentinel bin that
@@ -350,7 +350,7 @@ def fused_dedup_prepare_dispatch(
         BLOCK=BLOCK,
     )
 
-    # ── Kernel 2: reduce histograms, prefix sums, send_meta (single CTA) ──
+    # -- Kernel 2: reduce histograms, prefix sums, send_meta (single CTA) --
     dedup_tokens_per_gpu = torch.empty(ep_size, dtype=torch.int64, device=device)
     tokens_per_ep_rank = torch.empty(ep_size, dtype=torch.int64, device=device)
     expert_starts = torch.empty(num_experts, dtype=torch.int64, device=device)
@@ -385,7 +385,7 @@ def fused_dedup_prepare_dispatch(
     idxs = torch.empty(m * k, dtype=torch.int64, device=device)
     expand_idx = torch.empty(m * k, dtype=torch.int64, device=device)
 
-    # ── Kernel 3: dedup scatter + counting sort + expand_idx ──
+    # -- Kernel 3: dedup scatter + counting sort + expand_idx --
     BLOCK_M = 128
     grid = (triton.cdiv(m, BLOCK_M),)
     _dedup_scatter_expand_kernel[grid](
@@ -419,7 +419,7 @@ def fused_dedup_prepare_dispatch(
     )
 
 
-# ── Post-all-to-all kernels ──
+# -- Post-all-to-all kernels --
 
 
 @triton.jit
@@ -435,9 +435,9 @@ def _build_expert_idxs_kernel(
     """Build local expert index for each received token slot.
 
     Reads tokens_per_expert_group (NUM_EXPERTS,) and produces:
-      expert_idxs          — local expert index (expert_id % experts_per_rank)
+      expert_idxs          - local expert index (expert_id % experts_per_rank)
                              for each token slot, via segmented fill.
-      output_splits_tensor — total tokens per EP rank (grouped sum), written
+      output_splits_tensor - total tokens per EP rank (grouped sum), written
                              by CTA 0.
     """
     pid = tl.program_id(0)
@@ -617,7 +617,7 @@ def moe_ep_prepare_dispatch(
         send_meta,  # (ep_size, experts_per_rank + 1) interleaved: [tpe_0..., dedup_0, ...]
     ) = fused_dedup_prepare_dispatch(topk_ids, num_experts, ep_size, experts_per_rank)
 
-    # ── Metadata all-to-all (piggyback dedup counts alongside per-expert token counts) ──
+    # -- Metadata all-to-all (piggyback dedup counts alongside per-expert token counts) --
     recv_meta = send_meta.new_empty(send_meta.shape[0])
     torch.compiler.disable(dist.all_to_all_single)(recv_meta, send_meta, group=ep_group)
     recv_meta_2d = recv_meta.view(ep_size, experts_per_rank + 1)
@@ -629,7 +629,7 @@ def moe_ep_prepare_dispatch(
         tokens_per_expert_group, ep_size, experts_per_rank, max_total=m * k * ep_size
     )
 
-    # ── Batch D-to-H copies on main stream ──
+    # -- Batch D-to-H copies on main stream --
     dedup_input_splits_cpu = get_pinned_buffer(
         "dedup_input_splits", ep_size, dedup_tokens_per_gpu.dtype
     )
@@ -652,7 +652,7 @@ def moe_ep_prepare_dispatch(
     total_output = sum(output_splits)
     expert_idxs = expert_idxs[:total_output]
 
-    # ── expand_idx all-to-all + adjustment ──
+    # -- expand_idx all-to-all + adjustment --
     received_expand_idx = expand_idx.new_empty(total_output)
     torch.compiler.disable(dist.all_to_all_single)(
         received_expand_idx,

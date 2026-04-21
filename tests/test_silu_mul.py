@@ -1,6 +1,4 @@
-"""
-Correctness tests for the fused ``silu(gate) * up`` operator.
-"""
+"""Correctness tests for the fused ``silu(gate) * up`` operator."""
 
 import pytest
 import torch

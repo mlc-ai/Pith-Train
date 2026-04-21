@@ -32,9 +32,7 @@ def decoder_layer_forward_dispatch(
     input_splits: Optional[List[int]],
     ep_group: Optional[torch.distributed.ProcessGroup] = None,
 ):
-    """
-    All-to-all dispatch.
-    """
+    """All-to-all dispatch."""
     if output_splits is not None:
         gathered_tokens = direct_all_to_all(
             sorted_tokens,
@@ -55,9 +53,7 @@ def decoder_layer_forward_combine(
     output_splits: Optional[List[int]],
     ep_group: Optional[torch.distributed.ProcessGroup] = None,
 ):
-    """
-    All-to-all combine.
-    """
+    """All-to-all combine."""
     if output_splits is not None:
         outs = direct_all_to_all(
             outs,
@@ -75,9 +71,7 @@ def decoder_layer_forward(
     layer: DecoderLayerProtocol,
     hidden_states: torch.Tensor,
 ):
-    """
-    Forward pass for a DualPipeV decoder layer.
-    """
+    """Forward pass for a DualPipeV decoder layer."""
 
     if ModelImplMode.use_reference_fwd:
         return (
@@ -137,7 +131,7 @@ def decoder_layer_forward(
 
     if fwd_comm_work is not None:
         fwd_comm_work.wait()
-    # Stage 2 all-to-all has completed — sorted_tokens storage is no longer read.
+    # Stage 2 all-to-all has completed - sorted_tokens storage is no longer read.
     # Free it now; run_backward only needs the grad_fn chain, not the values.
     # Guard: only when a2a actually occurred (ep_size > 1); otherwise sorted_tokens
     # and gathered_tokens share storage.
@@ -147,7 +141,7 @@ def decoder_layer_forward(
     moe_outs = layer.forward_mlp(gathered_tokens, expert_idxs, expand_idx)
 
     record.outs = Stage3Outs(moe_outs)
-    # Free args storage — values no longer needed, only .grad is read after backward.
+    # Free args storage - values no longer needed, only .grad is read after backward.
     # Only safe for MoE layers with EP: padded_index_gather is the first consumer and
     # doesn't save the input.  For dense layers or ep_size==1, gate_proj/up_proj may
     # save gathered_tokens directly, or it shares storage with sorted_tokens.
@@ -177,7 +171,7 @@ def decoder_layer_forward(
 
     if fwd_comm_work is not None:
         fwd_comm_work.wait()
-    # Stage 4 all-to-all has completed — Stage 3 output is no longer read.
+    # Stage 4 all-to-all has completed - Stage 3 output is no longer read.
     if has_experts and fwd_comm_work is not None:
         intermediate_tensors.stage3.outs.moe_outs.untyped_storage().resize_(0)
     hidden_states = layer.forward_aggregate(moe_outs, moe_local_idxs, topk_weight, residual)

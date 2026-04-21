@@ -1,7 +1,7 @@
 """
 Symbolic tensor descriptors and memory tracking containers.
 
-No real tensors are created — all sizes are computed analytically from shapes and dtypes.
+No real tensors are created - all sizes are computed analytically from shapes and dtypes.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ DTYPE_SIZES: dict[str, int] = {
 
 @dataclass(slots=True)
 class TensorSpec:
-    """A symbolic tensor descriptor — shape + dtype, no allocation."""
+    """A symbolic tensor descriptor - shape + dtype, no allocation."""
 
     name: str
     shape: tuple[int, ...]

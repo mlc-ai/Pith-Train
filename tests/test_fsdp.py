@@ -32,7 +32,7 @@ def fill_weights(module: nn.Module):
     elif isinstance(module, GroupLinear):
         nn.init.xavier_uniform_(module.weight, gain=1.0)
     elif isinstance(module, GptOssExperts):
-        # Raw nn.Parameter — the GroupLinear branch above doesn't reach them.
+        # Raw nn.Parameter - the GroupLinear branch above doesn't reach them.
         nn.init.xavier_uniform_(module.gate_up_proj, gain=1.0)
         nn.init.xavier_uniform_(module.down_proj, gain=1.0)
     elif isinstance(module, (DeepseekV2LiteMoEGate, Qwen3MoeGate, GptOssTopKRouter)):

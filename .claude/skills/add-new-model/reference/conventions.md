@@ -146,8 +146,9 @@ raw-Parameter pattern match that convention.
 HF's live Parameter is often `[E, in, out]` — the transposed layout —
 because HF loads for `F.linear`-style usage. That's fine; the transpose
 between `[E, out, in]` (runtime/DCP) and `[E, in, out]` (HF BF16
-safetensors) lives in **exactly one place**: `_stack_experts` in
-`dcp2hf`. See `checkpoint.md`.
+safetensors) lives in **exactly one place**: a model-specific
+converter's `postprocess_canonical` (see `GptOssConverter` in
+`pithtrain/tasks/convert_checkpoint/gpt_oss.py`). See `checkpoint.md`.
 
 **Do not pick a different layout without evidence** (a microbench showing
 materially faster kernels on our target hardware). In the absence of
@@ -211,9 +212,10 @@ Nothing else should differ. In particular:
   → split along dim 0 into E per-expert tensors (each `[out, in]`)
   → write under `layers.0.mlp.experts.IDX.gate_up_proj`.
   (Dequant if needed — see `checkpoint.md`.)
-- `dcp2hf`: `_stack_experts` stacks per-expert tensors back into
-  `[E, out, in]`, transposes to `[E, in, out]` for HF live layout,
-  adds `model.` prefix, writes safetensors.
+- `dcp2hf`: a model-specific converter's `postprocess_canonical`
+  stacks per-expert tensors back into `[E, out, in]`, transposes to
+  `[E, in, out]` for HF live layout. The generic `dcp2hf` then adds
+  `model.` prefix and writes safetensors.
 
 ### Round-trip test (non-negotiable)
 
