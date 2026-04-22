@@ -23,10 +23,14 @@ Key fields to extract:
 |---|---|---|
 | `AllocTRES` | `cpu=208,mem=1860368M,node=1,billing=208,gres/gpu=8` | Node count, GPUs per node, CPUs, memory |
 | `NodeList` | `orchard-flame-5` or `orchard-flame-[3-6]` | Which hosts; on most clusters `ssh <name>` gives direct access |
-| `StartTime` | `2026-04-21T18:06:13` | When the allocation began |
-| `EndTime` | `2026-04-23T18:06:13` | Wall-clock deadline — check remaining budget before long runs |
 
-Before launching anything long-running, compare `EndTime` to `now() + estimated_runtime`. If the budget is too tight, surface this to the user instead of launching and getting killed mid-run.
+For a quick remaining-time check, use `squeue` directly — it returns `D-HH:MM:SS` without needing to parse timestamps:
+
+```bash
+squeue -h -j $SLURM_JOB_ID -o %L
+```
+
+Before launching anything long-running, compare this against the estimated runtime. If the budget is too tight, surface this to the user instead of launching and getting killed mid-run.
 
 If `$SLURM_JOB_ID` is not set, you're not inside an allocation — fall back to direct `torchrun` and do not attempt to invoke `srun`.
 
@@ -34,19 +38,11 @@ If `$SLURM_JOB_ID` is not set, you're not inside an allocation — fall back to 
 
 ### Flags that matter
 
-- **`-N <n>`** — number of nodes to dispatch to. Match to the parallelism (e.g., `-N 2` for pipeline-parallel of 2 spanning two nodes).
+- **`-N <n>`** — number of nodes to dispatch to. In most training runs this matches the pipeline-parallel degree (PP), but not always: the full parallelism plan and GPUs-per-node determine total nodes (e.g., PP=1 with EP=16 on 8-GPU nodes still needs 2 nodes).
 - **`-W 0`** — wait indefinitely for stragglers after the first task exits. The default behavior terminates remaining tasks shortly after the first one ends, which kills workers that are still cleanly shutting down. Always use `-W 0` for training and evaluation runs.
-- **`-o <pattern>`** — stdout redirection. **Use this instead of piping through `tee`.** On multi-node, `tee`ing srun output collapses concurrent writes from all ranks. `-o` is distributed-aware — srun collects output from every node into the specified file(s). Common patterns: `logs/job_%j.log` (merged) or `logs/job_%j_node%n.log` (per-node).
+- **`-o <file>`** — stdout redirection. Use this instead of piping through `tee`. On multi-node, `tee`ing srun output collapses concurrent writes from all ranks. `-o` is distributed-aware — srun collects output from every rank into the single specified file, preserving the one-command-one-log abstraction.
 - **`--open-mode=append`** vs **`--open-mode=truncate`** — for resumed training, `append` preserves history across restarts. Use `truncate` for fresh runs where overwriting is intended.
-- **`--nodelist=<hosts>`** — restrict dispatch to specific nodes. Useful for:
-  - Debugging on a subset (e.g., 4 nodes allocated, but repro on 2 specific ones)
-  - Reproducibility (pin runs to the same nodes to rule out hardware variation)
-
-Combine `-N` and `--nodelist` to scope down an allocation: `srun -N 2 --nodelist=orchard-flame-[3-4] ...` runs only on those two nodes.
-
-### Make the script executable
-
-`srun launch.sh` requires `launch.sh` to have the executable bit set. `bash launch.sh` works without it — `srun launch.sh` does not. Run `chmod +x launch.sh` before invoking `srun` on a script.
+- **`--nodelist=<hosts>`** — restrict dispatch to specific nodes. Useful for debugging at a smaller scale (e.g., 4 nodes allocated, but debug with 2 specific ones).
 
 ## References
 
