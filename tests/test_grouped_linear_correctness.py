@@ -579,3 +579,58 @@ def test_scatter_then_grouped_mm_end_to_end():
         assert torch.allclose(result, result_ref, rtol=1e-4, atol=1e-4), (
             f"End-to-end mismatch for '{test_name}'! Max diff: {max_diff}"
         )
+
+
+def test_group_linear_weight_grad_store():
+    """GroupLinear correctly defers weight gradients via WeightGradStore."""
+    from pithtrain.dualpipe.utils import WeightGradStore
+
+    device = torch.device("cuda")
+    dtype = torch.bfloat16
+
+    num_groups, in_features, out_features = 4, 128, 256
+    group_sizes = [16, 8, 12, 4]
+    M_total = sum(group_sizes)
+    grouped_mm_offs = torch.tensor(group_sizes, device=device).cumsum(0).to(torch.int32)
+
+    gl_ref = GroupLinear(num_groups, in_features, out_features).to(device).to(dtype)
+    torch.nn.init.normal_(gl_ref.weight, std=0.02)
+
+    x_raw = torch.randn(M_total, in_features, device=device, dtype=dtype)
+    grad = torch.randn(M_total, out_features, device=device, dtype=dtype)
+
+    # Reference: no WeightGradStore.
+    x_ref = x_raw.detach().clone().requires_grad_(True)
+    gl_ref(x_ref, grouped_mm_offs).backward(grad)
+    ref_weight_grad = gl_ref.weight.grad.clone()
+    ref_input_grad = x_ref.grad.clone()
+
+    # Deferred path.
+    gl = GroupLinear(num_groups, in_features, out_features).to(device).to(dtype)
+    gl.weight.data.copy_(gl_ref.weight.data)
+    x_def = x_raw.detach().clone().requires_grad_(True)
+
+    WeightGradStore.enabled = True
+    try:
+        gl(x_def, grouped_mm_offs).backward(grad)
+
+        assert gl.weight.grad is None, "Weight grad should be deferred"
+        assert x_def.grad is not None, "Input grad should be on the critical path"
+
+        input_diff = (x_def.grad - ref_input_grad).abs().max().item()
+        assert torch.allclose(x_def.grad, ref_input_grad, rtol=1e-3, atol=1e-3), (
+            f"Input grad diff = {input_diff}"
+        )
+
+        WeightGradStore.flush()
+        WeightGradStore.pop()
+
+        assert gl.weight.grad is not None, "Weight grad should exist after pop"
+        assert gl.weight.grad.shape == gl.weight.shape
+        weight_diff = (gl.weight.grad - ref_weight_grad).abs().max().item()
+        assert torch.allclose(gl.weight.grad, ref_weight_grad, rtol=1e-3, atol=1e-3), (
+            f"Deferred vs direct weight grad diff = {weight_diff}"
+        )
+    finally:
+        WeightGradStore.enabled = False
+        WeightGradStore.clear()
