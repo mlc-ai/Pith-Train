@@ -20,6 +20,7 @@ from pithtrain.dualpipe.layer_partition import layer_partition
 from pithtrain.dualpipe.modeling import decoder_layer_backward, decoder_layer_forward
 from pithtrain.dualpipe.utils import run_backward
 from pithtrain.layers.factory import ModelImplMode, get_linear_cls
+from pithtrain.layers.group_linear import GroupLinearFunc
 from pithtrain.models.interface import ForwardAttnOutput
 from pithtrain.modules.load_balance import MoELoadBalanceLossInjector, MoELoadBalanceLossTracker
 from pithtrain.operators.clamped_swiglu import clamped_swiglu
@@ -180,12 +181,15 @@ class GptOssExperts(nn.Module):
         self.down_proj = nn.Parameter(torch.empty(num_experts, hidden_size, intermediate_size))
         self.down_proj_bias = nn.Parameter(torch.zeros(num_experts, hidden_size))
 
-    def _grouped_mm(
-        self, x: torch.Tensor, weight: nn.Parameter, offs: torch.Tensor
+    def _group_linear(
+        self,
+        x: torch.Tensor,
+        weight: nn.Parameter,
+        offs: torch.Tensor,
     ) -> torch.Tensor:
         if x.shape[0] == 0:
             return x @ weight[0].transpose(-2, -1)
-        return F.grouped_mm(x, weight.transpose(-2, -1), offs=offs)
+        return GroupLinearFunc.apply(x, weight, offs)
 
     def forward(
         self,
@@ -209,11 +213,11 @@ class GptOssExperts(nn.Module):
             right=True,
         ).clamp_(max=self.num_experts - 1)
 
-        gate_up = self._grouped_mm(x, self.gate_up_proj, grouped_mm_offs)
+        gate_up = self._group_linear(x, self.gate_up_proj, grouped_mm_offs)
         gate_up = gate_up + self.gate_up_proj_bias[group_ids]
         activated = clamped_swiglu(gate_up, SWIGLU_ALPHA, self.swiglu_limit)
 
-        out = self._grouped_mm(activated, self.down_proj, grouped_mm_offs)
+        out = self._group_linear(activated, self.down_proj, grouped_mm_offs)
         out = out + self.down_proj_bias[group_ids]
         return out
 
