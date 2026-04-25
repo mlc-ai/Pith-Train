@@ -353,6 +353,15 @@ def main(ctx: DistributedCtx, model_name: str):
         if torch.all(p_grad == 0) and torch.all(p_ref.grad == 0):
             print("[warn] rank-%d, Parameter %s has all-zero gradient, skipping." % (ctx.rank, n))
             continue
+        # Reference accumulates in bf16, DualPipeV in fp32; cosine-diff on
+        # noise-floor grads (e.g. gpt-oss router.bias ~1e-8) is meaningless.
+        ref_max = p_ref.grad.abs().max().item()
+        if ref_max < 1e-5:
+            print(
+                "[warn] rank-%d, Parameter %s grad max=%.2e at bf16 noise floor, skipping."
+                % (ctx.rank, n, ref_max)
+            )
+            continue
         diff = calculate_difference(p_grad, p_ref.grad)
         if diff > largest_diff:
             largest_diff = diff

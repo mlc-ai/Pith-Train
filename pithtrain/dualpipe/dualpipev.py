@@ -567,6 +567,14 @@ class DualPipeV(nn.Module):
             fsdp_state = fully_shard.state(fsdp_module)  # type: ignore[attr-defined]
             for state in fsdp_state._state_ctx.all_states:
                 if state._fsdp_param_group:
+                    # Fold wgrad-delay's trailing param_dtype write into the
+                    # reduce_dtype accumulator so foreach_reduce sees uniform
+                    # dtype. accumulate first (to_accumulated would otherwise
+                    # clobber prior fp32 contributions).
+                    for fsdp_param in state._fsdp_param_group.fsdp_params:
+                        if hasattr(fsdp_param, "_unsharded_param"):
+                            fsdp_param.accumulate_unsharded_grad_if_needed()
+                            fsdp_param.to_accumulated_grad_if_needed()
                     state._fsdp_param_group.post_backward()
 
             # it would be much better if pipelining backward invoked .backward so autograd hooks
