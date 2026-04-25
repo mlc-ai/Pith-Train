@@ -4,11 +4,13 @@ import atexit
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Generator
 
 import torch
 
 from pithtrain.config import SlottedDefault
+from pithtrain.modules import shutdown
 
 
 @dataclass(init=False, slots=True)
@@ -111,7 +113,11 @@ def setup_default_process_group(cfg: DistributedCfg, ctx: DistributedCtx) -> Non
     kwargs = dict()
     kwargs["backend"] = "nccl"
     kwargs["device_id"] = ctx.local_rank
+    # NCCL default per-collective timeout is 30 min; cap at 3 to bound worst-case hangs.
+    kwargs["timeout"] = timedelta(seconds=180)
     torch.distributed.init_process_group(**kwargs)
+    # See pithtrain.modules.shutdown for why os._exit(1), not destroy/abort.
+    shutdown.install_failfast_excepthook()
     atexit.register(torch.distributed.destroy_process_group)
     torch.cuda.set_device(ctx.local_rank)
 

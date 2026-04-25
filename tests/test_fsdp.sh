@@ -1,7 +1,7 @@
 #!/bin/bash
 # Test FSDP with DualPipeV.
 
-set -eu
+set -euo pipefail
 
 export WORKSPACE=$(readlink -f ${WORKSPACE:-$PWD/workspace})
 export OMP_NUM_THREADS=8
