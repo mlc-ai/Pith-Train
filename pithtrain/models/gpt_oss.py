@@ -18,14 +18,20 @@ from torch.nn.attention.flex_attention import (
 from pithtrain.dualpipe.execution import EpilogArgs, IntermediateTensors, PrologArgs, PrologOuts
 from pithtrain.dualpipe.layer_partition import layer_partition
 from pithtrain.dualpipe.modeling import decoder_layer_backward, decoder_layer_forward
-from pithtrain.dualpipe.utils import run_backward
+from pithtrain.dualpipe.utils import FP8WeightCacheControl, run_backward
+from pithtrain.layers.deepgemm_fp8_linear import FP8GroupLinearFunc
 from pithtrain.layers.factory import ModelImplMode, get_linear_cls
 from pithtrain.layers.group_linear import GroupLinearFunc
 from pithtrain.models.interface import ForwardAttnOutput
 from pithtrain.modules.load_balance import MoELoadBalanceLossInjector, MoELoadBalanceLossTracker
 from pithtrain.operators.clamped_swiglu import clamped_swiglu
+from pithtrain.operators.deepgemm_fp8_quantize import fused_blockwise_transpose_cast_to_fp8_batched
 from pithtrain.operators.ep_dispatch import moe_ep_prepare_dispatch
-from pithtrain.operators.token_scatter import padded_index_gather, scatter_for_grouped_gemm
+from pithtrain.operators.token_scatter import (
+    padded_index_gather,
+    precompute_group_indices,
+    scatter_for_grouped_gemm,
+)
 
 torch._dynamo.allow_in_graph(MoELoadBalanceLossInjector)
 
@@ -181,14 +187,49 @@ class GptOssExperts(nn.Module):
         self.down_proj = nn.Parameter(torch.empty(num_experts, hidden_size, intermediate_size))
         self.down_proj_bias = nn.Parameter(torch.zeros(num_experts, hidden_size))
 
+        # FP8 path: gpt-oss stores expert projections as raw nn.Parameter (HF layout
+        # with fused gate_up), so we cannot use the FP8GroupLinear module wrapper.
+        # We dispatch FP8GroupLinearFunc directly on these parameters and host the
+        # quantized-weight cache here. Cache is dict-or-None so DualPipeV's
+        # FP8WeightCacheControl.clear_caches (which sets _wq_cache=None) works.
+        self._fp8 = ModelImplMode.fp8_training == "deep-gemm"
+        self._wq_cache: dict[str, tuple] | None = None
+        self._wq_version: int = -1
+
+    def _quantized_weight(self, name: str, weight: torch.Tensor) -> tuple:
+        if torch.compiler.is_compiling():
+            return fused_blockwise_transpose_cast_to_fp8_batched(weight)
+        ver = FP8WeightCacheControl._version
+        cache = self._wq_cache
+        if FP8WeightCacheControl.enabled and self._wq_version == ver and cache is not None:
+            hit = cache.get(name)
+            if hit is not None:
+                return hit
+        result = fused_blockwise_transpose_cast_to_fp8_batched(weight)
+        if FP8WeightCacheControl.enabled:
+            if self._wq_version != ver or cache is None:
+                self._wq_cache = {name: result}
+                self._wq_version = ver
+            else:
+                cache[name] = result
+        return result
+
     def _group_linear(
         self,
         x: torch.Tensor,
         weight: nn.Parameter,
+        name: str,
         offs: torch.Tensor,
+        ks: list | None,
+        ks_tensor: torch.Tensor | None,
+        group_indices: torch.Tensor | None,
     ) -> torch.Tensor:
         if x.shape[0] == 0:
             return x @ weight[0].transpose(-2, -1)
+        if self._fp8:
+            return FP8GroupLinearFunc.apply(
+                x, weight, offs, ks, ks_tensor, self._quantized_weight(name, weight), group_indices
+            )
         return GroupLinearFunc.apply(x, weight, offs)
 
     def forward(
@@ -213,11 +254,19 @@ class GptOssExperts(nn.Module):
             right=True,
         ).clamp_(max=self.num_experts - 1)
 
-        gate_up = self._group_linear(x, self.gate_up_proj, grouped_mm_offs)
+        # Hopper SM90 needs explicit per-row group indices for m_grouped FP8 GEMM;
+        # Blackwell ignores it. Computed once and shared across both projections.
+        gi = precompute_group_indices(grouped_mm_offs, x.shape[0]) if self._fp8 else None
+
+        gate_up = self._group_linear(
+            x, self.gate_up_proj, "gate_up_proj", grouped_mm_offs, ks, ks_tensor, gi
+        )
         gate_up = gate_up + self.gate_up_proj_bias[group_ids]
         activated = clamped_swiglu(gate_up, SWIGLU_ALPHA, self.swiglu_limit)
 
-        out = self._group_linear(activated, self.down_proj, grouped_mm_offs)
+        out = self._group_linear(
+            activated, self.down_proj, "down_proj", grouped_mm_offs, ks, ks_tensor, gi
+        )
         out = out + self.down_proj_bias[group_ids]
         return out
 
