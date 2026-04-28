@@ -239,7 +239,12 @@ class ScatterForGroupedGemm(torch.autograd.Function):
             GEMM_ALLOC_ALIGNMENT=_GEMM_ALLOC_ALIGNMENT,
         )
 
-        # Narrow to actual padded size (removes over-allocated tail)
+        # Narrow to actual padded size (removes over-allocated tail).
+        # ``actual_M = sum(ks)`` is already a multiple of ``padding_alignment``
+        # (each group is rounded up to that alignment inside the prep kernel),
+        # so this size is sufficient for BF16 grouped GEMM AND for DeepGEMM's
+        # FP8 ``k_grouped_fp8_gemm_tn_contiguous`` which asserts the data row
+        # count equals ``sum(ks)`` exactly.
         ks_cpu = get_pinned_buffer("ks", num_groups, torch.int32)
         with torch.cuda.stream(copy_stream):
             copy_stream.wait_event(copy_event)
@@ -247,10 +252,7 @@ class ScatterForGroupedGemm(torch.autograd.Function):
         copy_stream.synchronize()
         ks = ks_cpu.tolist()
         actual_M = sum(ks)
-        M_rounded = (
-            (actual_M + _GEMM_ALLOC_ALIGNMENT - 1) // _GEMM_ALLOC_ALIGNMENT * _GEMM_ALLOC_ALIGNMENT
-        )
-        output_tokens = output_tokens[:M_rounded]
+        output_tokens = output_tokens[:actual_M]
 
         ctx.save_for_backward(reverse_shuffle_idxs)
         return output_tokens, reverse_shuffle_idxs, grouped_mm_offs, ks_tensor, ks

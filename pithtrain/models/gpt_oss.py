@@ -235,15 +235,6 @@ class GptOssExperts(nn.Module):
         ks: list | None = None,
         ks_tensor: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        # F.grouped_mm leaves rows beyond grouped_mm_offs[-1] uninitialised
-        # (often NaN).  Combined with bias-add + elementwise activations, the
-        # `0 * NaN = NaN` pattern in backward poisons expert bias gradients.
-        # Truncate to the valid region.
-        if ks is not None:
-            actual_m = sum(ks)
-            if actual_m < x.shape[0]:
-                x = x[:actual_m]
-
         group_ids = torch.searchsorted(
             grouped_mm_offs.to(torch.int64),
             torch.arange(x.shape[0], device=x.device, dtype=torch.int64),
