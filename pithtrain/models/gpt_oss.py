@@ -2,18 +2,13 @@
 
 import math
 from dataclasses import fields
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from flash_attn.cute.interface import flash_attn_func
 from torch import nn
-from torch.nn.attention.flex_attention import (
-    AuxRequest,
-    BlockMask,
-    create_block_mask,
-    flex_attention,
-)
 
 from pithtrain.dualpipe.execution import EpilogArgs, IntermediateTensors, PrologArgs, PrologOuts
 from pithtrain.dualpipe.layer_partition import layer_partition
@@ -27,6 +22,7 @@ from pithtrain.modules.load_balance import MoELoadBalanceLossInjector, MoELoadBa
 from pithtrain.operators.clamped_swiglu import clamped_swiglu
 from pithtrain.operators.deepgemm_fp8_quantize import fused_blockwise_transpose_cast_to_fp8_batched
 from pithtrain.operators.ep_dispatch import moe_ep_prepare_dispatch
+from pithtrain.operators.indexed_bias_add import indexed_bias_add
 from pithtrain.operators.token_scatter import (
     padded_index_gather,
     precompute_group_indices,
@@ -261,13 +257,13 @@ class GptOssExperts(nn.Module):
         gate_up = self._group_linear(
             x, self.gate_up_proj, "gate_up_proj", grouped_mm_offs, ks, ks_tensor, gi
         )
-        gate_up = gate_up + self.gate_up_proj_bias[group_ids]
+        gate_up = indexed_bias_add(gate_up, self.gate_up_proj_bias, group_ids, grouped_mm_offs)
         activated = clamped_swiglu(gate_up, SWIGLU_ALPHA, self.swiglu_limit)
 
         out = self._group_linear(
             activated, self.down_proj, "down_proj", grouped_mm_offs, ks, ks_tensor, gi
         )
-        out = out + self.down_proj_bias[group_ids]
+        out = indexed_bias_add(out, self.down_proj_bias, group_ids, grouped_mm_offs)
         return out
 
 
@@ -391,13 +387,11 @@ class GptOssAttention(nn.Module):
     """
     Grouped Query Attention with attention sinks and optional sliding window.
 
-    Attention sinks are a learned per-head scalar added to the softmax
-    denominator.  We apply them as a post-hoc LSE renormalisation on the
-    flex_attention output rather than via a ``score_mod`` closure, so that
-    the surrounding ``_forward_attn_compute`` stays ``@torch.compile(fullgraph=True)``
-    traceable.  Large sink values let a head "dump" attention mass to the
-    sink, producing near-zero attention to real tokens.  See the forward
-    method for the renorm math.
+    Backed by FlashAttention-4 (CUTE DSL).  learnable_sink is a per-head
+    scalar fused into the softmax denominator inside the kernel — letting a
+    head "dump" attention mass to the sink and produce near-zero attention to
+    real tokens.  Causal + sliding window + GQA + per-head sink are all
+    native kwargs, so attention runs in a single FA-4 kernel call.
     """
 
     def __init__(
@@ -407,6 +401,8 @@ class GptOssAttention(nn.Module):
         num_key_value_heads: int,
         head_dim: int,
         attention_bias: bool = True,
+        is_sliding: bool = False,
+        sliding_window: int = 128,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -414,6 +410,8 @@ class GptOssAttention(nn.Module):
         self.num_kv_heads = num_key_value_heads
         self.head_dim = head_dim
         self.scaling = head_dim**-0.5
+        self.is_sliding = is_sliding
+        self.sliding_window = sliding_window
 
         LinearCls = get_linear_cls()
         self.q_proj = LinearCls(hidden_size, num_attention_heads * head_dim, bias=attention_bias)
@@ -427,7 +425,6 @@ class GptOssAttention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         position_embeddings: Tuple[torch.Tensor, torch.Tensor],
-        block_mask: BlockMask,
     ) -> torch.Tensor:
         bsz, seq_len, _ = hidden_states.size()
 
@@ -440,34 +437,26 @@ class GptOssAttention(nn.Module):
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        query_states = query_states.transpose(1, 2)
-        key_states = key_states.transpose(1, 2)
-        value_states = value_states.transpose(1, 2)
-
-        # Attention sinks via post-hoc LSE renormalisation (HF / TorchTitan
-        # recipe).  The alternative - a score_mod closure over self.sinks with
-        # a virtual zero-valued KV row - forces flex_attention to self-compile
-        # and prevents the outer @torch.compile(fullgraph=True) from tracing
-        # through, which leaves the whole attention block in eager mode.  The
-        # renormalisation here is mathematically identical:
-        #   softmax_with_sink(s)_i = exp(s_i) / (sum_j exp(s_j) + exp(sink))
-        #                          = softmax(s)_i * sigmoid(lse - sink)
-        attn_output, aux = flex_attention(
+        # FA-4 expects (B, S, H, D); GQA is auto-detected from H_q vs H_kv.
+        # Sliding window: (W-1, 0) means each query attends to W tokens (self
+        # + W-1 prior).
+        window_size: Tuple[Optional[int], Optional[int]] = (
+            (self.sliding_window - 1, 0) if self.is_sliding else (None, None)
+        )
+        # FA-4 requires learnable_sink to match q/k/v dtype; the parameter
+        # itself stays in fp32 for optimizer numerical stability.
+        # flash_attn_func returns (out, lse); we only need out.
+        attn_output, _ = flash_attn_func(
             query_states,
             key_states,
             value_states,
-            block_mask=block_mask,
-            scale=self.scaling,
-            enable_gqa=True,
-            return_aux=AuxRequest(lse=True),
+            softmax_scale=self.scaling,
+            causal=True,
+            window_size=window_size,
+            learnable_sink=self.sinks.to(query_states.dtype),
         )
-        lse = aux.lse
-        sink_scale = torch.sigmoid(lse - self.sinks.float().view(1, -1, 1))
-        attn_output = attn_output * sink_scale.to(attn_output.dtype).unsqueeze(-1)
 
-        attn_output = attn_output.transpose(1, 2).reshape(
-            bsz, seq_len, self.num_heads * self.head_dim
-        )
+        attn_output = attn_output.reshape(bsz, seq_len, self.num_heads * self.head_dim)
         attn_output = self.o_proj(attn_output)
         return attn_output
 
@@ -493,6 +482,8 @@ class GptOssDecoderLayer(nn.Module):
         rms_norm_eps: float,
         attention_bias: bool,
         layer_idx: int,
+        is_sliding: bool = False,
+        sliding_window: int = 128,
         ep_size: int = 1,
         ep_group: Optional[dist.ProcessGroup] = None,
     ):
@@ -506,6 +497,8 @@ class GptOssDecoderLayer(nn.Module):
             num_key_value_heads=num_key_value_heads,
             head_dim=head_dim,
             attention_bias=attention_bias,
+            is_sliding=is_sliding,
+            sliding_window=sliding_window,
         )
 
         self.mlp = GptOssMLP(
@@ -521,7 +514,6 @@ class GptOssDecoderLayer(nn.Module):
         self.input_layernorm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
         self.post_attention_layernorm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
 
-    @torch.compile(fullgraph=True)
     def _forward_attn_compute(self, hidden_states: torch.Tensor):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
@@ -529,14 +521,10 @@ class GptOssDecoderLayer(nn.Module):
         position_embeddings = getattr(self, "_position_embeddings", None)
         if position_embeddings is None:
             raise RuntimeError("Position embeddings must be set before calling forward_attn")
-        block_mask = getattr(self, "_block_mask", None)
-        if block_mask is None:
-            raise RuntimeError("Block mask must be set before calling forward_attn")
 
         hidden_states = self.self_attn(
             hidden_states=hidden_states,
             position_embeddings=position_embeddings,
-            block_mask=block_mask,
         )
         hidden_states = residual + hidden_states
 
@@ -631,14 +619,10 @@ class GptOssDecoderLayer(nn.Module):
         position_embeddings = getattr(self, "_position_embeddings", None)
         if position_embeddings is None:
             raise RuntimeError("Position embeddings must be set before calling reference_forward")
-        block_mask = getattr(self, "_block_mask", None)
-        if block_mask is None:
-            raise RuntimeError("Block mask must be set before calling reference_forward")
 
         hidden_states = self.self_attn(
             hidden_states=hidden_states,
             position_embeddings=position_embeddings,
-            block_mask=block_mask,
         )
         hidden_states = residual + hidden_states
 
@@ -653,20 +637,6 @@ class GptOssDecoderLayer(nn.Module):
 # ---------------------------------------------------------------------------
 # Full Model
 # ---------------------------------------------------------------------------
-
-
-def _make_causal_mask():
-    def mask_mod(b, h, q_idx, kv_idx):
-        return kv_idx <= q_idx
-
-    return mask_mod
-
-
-def _make_sliding_mask(window_size: int):
-    def mask_mod(b, h, q_idx, kv_idx):
-        return (q_idx >= kv_idx) & (q_idx - kv_idx < window_size)
-
-    return mask_mod
 
 
 class GptOssModel(nn.Module):
@@ -735,6 +705,8 @@ class GptOssModel(nn.Module):
                     rms_norm_eps=rms_norm_eps,
                     attention_bias=attention_bias,
                     layer_idx=i,
+                    is_sliding=(layer_types[i] == "sliding_attention"),
+                    sliding_window=sliding_window,
                     ep_size=ep_size,
                     ep_group=ep_group,
                 )
@@ -762,29 +734,6 @@ class GptOssModel(nn.Module):
             truncate=bool(rope_scaling.get("truncate", False)),
         )
 
-        self._block_mask_cache: Dict[int, Tuple[BlockMask, BlockMask]] = {}
-
-    def _get_block_masks(self, seq_len: int, device: torch.device) -> Tuple[BlockMask, BlockMask]:
-        if seq_len not in self._block_mask_cache:
-            causal_mask = create_block_mask(
-                _make_causal_mask(),
-                B=None,
-                H=None,
-                Q_LEN=seq_len,
-                KV_LEN=seq_len,
-                device=device,
-            )
-            sliding_mask = create_block_mask(
-                _make_sliding_mask(self.sliding_window),
-                B=None,
-                H=None,
-                Q_LEN=seq_len,
-                KV_LEN=seq_len,
-                device=device,
-            )
-            self._block_mask_cache[seq_len] = (causal_mask, sliding_mask)
-        return self._block_mask_cache[seq_len]
-
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         intermediate_tensors: Optional[IntermediateTensors] = getattr(
             self, "_intermediate_tensors", None
@@ -802,12 +751,8 @@ class GptOssModel(nn.Module):
             sin[:seq_len].unsqueeze(0),
         )
 
-        causal_mask, sliding_mask = self._get_block_masks(seq_len, hidden_states.device)
-
-        for layer_idx_str, layer in self.layers.items():
+        for layer in self.layers.values():
             layer._position_embeddings = position_embeddings
-            layer_type = self.layer_types[int(layer_idx_str)]
-            layer._block_mask = sliding_mask if layer_type == "sliding_attention" else causal_mask
 
         if intermediate_tensors is None:
             for _, layer in self.layers.items():
