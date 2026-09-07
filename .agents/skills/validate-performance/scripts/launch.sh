@@ -1,10 +1,10 @@
 #!/bin/bash
-# Launch one arm of a correctness validation under torchrun.
+# Launch one arm of a throughput measurement under torchrun.
 #
 #   Usage:  bash launch.sh <run-file.py>
 #   Output: the training log on stdout and stderr
 #
-# Twin of .agents/skills/validate-performance/scripts/launch.sh; keep the two in sync.
+# Twin of .agents/skills/validate-correctness/scripts/launch.sh; keep the two in sync.
 
 set -euo pipefail
 
