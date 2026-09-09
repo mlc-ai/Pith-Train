@@ -38,9 +38,10 @@ ep_size = parsed.expert_parallel_size
 cp_size = parsed.context_parallel_size
 
 # 32 microbatches per stage is more than enough for the pipeline to reach steady state.
-# CP splits sequence not batch, so it does not multiply global_batch_size.
-dp_size = int(os.environ["WORLD_SIZE"]) // (pp_size * cp_size * ep_size)
-global_batch_size = 32 * dp_size * ep_size
+# CP splits sequence not batch, and EP shards experts not data, so neither multiplies
+# global_batch_size.
+dp_size = int(os.environ["WORLD_SIZE"]) // (pp_size * cp_size)
+global_batch_size = 32 * dp_size
 
 cfg = PretrainLMCfg()
 

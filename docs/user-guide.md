@@ -72,7 +72,7 @@ A run is configured by editing `script.py` — there are no command-line flags t
 | `distributed.pipeline_parallel_size` (PP) | Pipeline stages across ranks. |
 | `distributed.expert_parallel_size` (EP) | MoE experts distributed across ranks. |
 | `distributed.context_parallel_size` (CP) | Shards the sequence (long context). |
-| `distributed.sharding_strategy` | `"fsdp"` (lowest memory) or `"hsdp"` (replicate across DP). |
+| `distributed.hsdp_replica` | Number of FSDP replicas. `1` shards over the whole group (lowest memory); `N > 1` shards within a replica and all-reduces across the `N`. |
 | `training.micro_batch_size` | Sequences per micro-batch (per rank). |
 | `training.global_batch_size` | Total sequences per step; gradient-accumulated over micro-batches. |
 | `training.sequence_length` | Tokens per sequence. |
@@ -84,19 +84,19 @@ A run is configured by editing `script.py` — there are no command-line flags t
 | `training.save_interval` / `save_location` | Checkpoint cadence and directory. |
 | `logging.wandb` | Optional Weights & Biases logging (set entity/project, or comment out). |
 
-**Data-parallel (DP) is not set directly** — it is inferred: `dp = total_gpus / (pp × cp × ep)`.
+**Data-parallel (DP) is not set directly** — it is inferred, and there are two degrees. Attention gets `dp = total_gpus / (pp × cp)`; the experts get `expt_dp = total_gpus / (pp × ep)`. Both factor the same `total_gpus / pp` ranks of one pipeline stage.
 
 **Profiling a few steps.** To capture an Nsight Systems trace, set `training.nsys_start` and `training.nsys_stop`: the CUDA profiler runs from the start of `nsys_start` up to (but not including) `nsys_stop`, so `nsys_start=N, nsys_stop=N+1` profiles a single step `N`. Both default to `None` (disabled). Analogous `training.memory_profile_start` / `memory_profile_stop` fields drive the CUDA memory profiler.
 
 ## Scaling a run
 
-The one hard constraint: **`pp × cp × ep` must divide your total GPU count**; whatever is left over becomes DP. Some worked examples on an 8-GPU node:
+The hard constraints: **`pp` must divide your total GPU count**, and `cp` and `ep` must each divide the stage size `total_gpus / pp`. `cp` and `ep` do not have to divide each other. Some worked examples on an 8-GPU node:
 
 | Goal | Mesh |
 |---|---|
-| Single node, max expert sharding | `pp=1, ep=8` → `dp=1` |
-| Single node, some data parallelism | `pp=1, ep=4` → `dp=2` |
-| Two nodes (16 GPUs), pipeline + experts | `pp=2, ep=8` → `dp=1` |
+| Single node, max expert sharding | `pp=1, ep=8` → `dp=8`, `expt_dp=1` |
+| Single node, fewer experts per rank | `pp=1, ep=4` → `dp=8`, `expt_dp=2` |
+| Two nodes (16 GPUs), pipeline + experts | `pp=2, ep=8` → `dp=8`, `expt_dp=1` |
 | Long sequences | raise `cp` (e.g. `cp=2`), which shards the sequence via ring attention |
 
 **Multi-node (SLURM).** The same launcher works under `srun` — it reads `SLURM_*` env vars to build the `torchrun` rendezvous automatically:
@@ -141,7 +141,7 @@ Set `training.fp8 = True` to train in FP8 (128-element block scaling via DeepGEM
 
 **"Dataset is too small for this run."** Your run needs `max_steps × global_batch_size` samples but the tokenized corpus has fewer. Tokenize more DCLM shards, or lower `max_steps` / `global_batch_size`.
 
-**`world_size not divisible by pp × cp × ep`.** Adjust the mesh so the product divides your GPU count (see [Scaling](#scaling-a-run)).
+**`world_size not divisible by pp_size`**, or **`stage_size (world_size // pp_size) not divisible by cp_size`/`ep_size`.** Adjust the mesh so `pp` divides your GPU count and `cp` and `ep` each divide the stage size (see [Scaling](#scaling-a-run)).
 
 **Out of memory.** `micro_batch_size` is already 1 in the examples; from there, increase `ep` (or `pp`, or add nodes for more DP), shorten `sequence_length`, or enable FP8. Run `tools.memory_estimator` to find a mesh that fits.
 

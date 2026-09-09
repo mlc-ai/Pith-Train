@@ -59,9 +59,9 @@ Each node produces one `.nsys-rep` at `workspace/capture-nsys-profile/pithtrain_
 
 ## Common Issues
 
-### `WORLD_SIZE is not divisible by pp*cp*ep`
+### `WORLD_SIZE is not divisible by pp`, or the stage is not divisible by cp or ep
 
-The allocation doesn't have enough GPUs for the requested parallelism. Stop; tell the user their allocation is short (report current `world_size` and required `pp * cp * ep`) and ask whether to reduce PP/EP/CP or request more nodes. Do not silently adjust on their behalf.
+The allocation doesn't have enough GPUs for the requested parallelism. Stop; tell the user their allocation is short (report current `world_size`, and that `pp` must divide it with `cp` and `ep` each dividing `world_size / pp`) and ask whether to reduce PP/EP/CP or request more nodes. Do not silently adjust on their behalf.
 
 ### No `.nsys-rep` produced after the run
 

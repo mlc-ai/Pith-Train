@@ -142,7 +142,7 @@ if isinstance(gu, nn.Parameter):
 
 ```python
 full_l = label_scale * torch.randn(
-    ep_size * num_chunks * micro_batch_size, sequence_length, vocab_size, dtype=dtype,
+    dp_size * num_chunks * micro_batch_size, sequence_length, vocab_size, dtype=dtype,
 )
 ```
 

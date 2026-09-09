@@ -23,7 +23,7 @@ Extract these parameters from the user's message. If any required parameters are
 | PP size | `--pp-size` | Pipeline parallel degree. If the user says "2-way pipeline", use 2. |
 | EP size | `--ep-size` | Expert parallel degree. |
 | CP size | `--cp-size` | Context parallel degree. Use 1 if not using context parallelism. |
-| Total GPUs | `--total-gpus` | Total GPU count. E.g., "4x8 H100" = 32. "16 GPUs" = 16. FSDP (dp) dimension is derived: `dp = total_gpus / (pp * ep * cp)`. |
+| Total GPUs | `--total-gpus` | Total GPU count. E.g., "4x8 H100" = 32. "16 GPUs" = 16. FSDP dimensions are derived: `dp = (total_gpus / pp) / cp` for attention, `expt_dp = (total_gpus / pp) / ep` for the experts. |
 | Micro batch size | `--micro-batch-size` | Per-GPU micro batch size. |
 | Global batch size | `--global-batch-size` | Global batch size across all GPUs. |
 | Sequence length | `--sequence-length` | Token count per sequence. |
@@ -44,7 +44,7 @@ Extract these parameters from the user's message. If any required parameters are
 
 ### Deriving dp_size
 
-The tool computes `dp_size = total_gpus / (pp_size * cp_size * ep_size)`. Verify this is an integer. If not, the config is invalid — tell the user.
+The tool computes `stage_size = total_gpus / pp_size`, then `dp_size = stage_size / cp_size` and `expt_dp_size = stage_size / ep_size`. Verify each division is exact. If not, the config is invalid — tell the user.
 
 ### Common hardware specs
 
@@ -56,7 +56,7 @@ The tool computes `dp_size = total_gpus / (pp_size * cp_size * ep_size)`. Verify
 
 ### Constraint: num_chunks >= pp_size * 2
 
-The tool validates that `num_chunks = global_batch_size / (micro_batch_size * dp_size * ep_size) >= pp_size * 2`. If this fails, suggest increasing global_batch_size or decreasing micro_batch_size.
+The tool validates that `num_chunks = global_batch_size / (micro_batch_size * dp_size) >= pp_size * 2`. EP shards experts, not data, so it does not divide the batch. If this fails, suggest increasing global_batch_size or decreasing micro_batch_size.
 
 ## Step 2: Run the Estimator
 

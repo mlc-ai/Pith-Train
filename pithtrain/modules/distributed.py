@@ -18,8 +18,8 @@ class DistributedCfg(SlottedDefault):
     """
     Configuration for distributed runtime.
 
-    Parallelism degrees (PP, CP, EP), FSDP2 sharding strategy, and operation timeout. DP is
-    inferred from the world size.
+    Parallelism degrees (PP, CP, EP), FSDP replica count, and operation timeout. Both DP
+    degrees are derived from the world size.
     """
 
     pipeline_parallel_size: int = 1

@@ -7,7 +7,7 @@ from pithtrain.tasks import pretrain_lm
 distributed = cfg.distributed
 distributed.pipeline_parallel_size = 4
 distributed.expert_parallel_size = 8
-distributed.sharding_strategy = "hsdp"
+distributed.hsdp_replica = 2
 
 training = cfg.training
 training.micro_batch_size = 1
