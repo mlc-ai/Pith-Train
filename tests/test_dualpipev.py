@@ -147,8 +147,8 @@ def shard_experts(model, ep_rank, ep_size):
 
 
 def apply_fsdp(model, dtype):
-    # Mirrors modules.training.apply_fsdp: the expt parameters replicate over the dp axis of the
-    # expert view, the attn parameters over the flattened dp x cp stage of the attention view.
+    # Mirrors modules.training.apply_fsdp: the expert parameters replicate over the dp axis of the
+    # expert view, the attention parameters over the flattened dp x cp stage of the attention view.
     expt_fsdp_mesh = distributed.expt_mesh["dp"]
     attn_fsdp_mesh = distributed.attn_mesh["dp", "cp"]._flatten()
     mp = MixedPrecisionPolicy(

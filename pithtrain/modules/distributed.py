@@ -59,9 +59,9 @@ class DistributedCfg(SlottedDefault):
     Number of replicas each FSDP shard group is split into.
 
     At 1, FSDP shards every parameter across the whole replica group for its class: the dp x cp
-    stage for the attn parameters, the dp axis of the expert view for the expt parameters. Above
-    1, both of those groups split into this many replicas, so both must divide by it, and FSDP
-    shards within one replica and all-reduces across them. Raise it when one replica already
+    stage for the attention parameters, the dp axis of the expert view for the expert parameters.
+    Above 1, both of those groups split into this many replicas, so both must divide by it, and
+    FSDP shards within one replica and all-reduces across them. Raise it when one replica already
     holds the model, trading memory for a cheaper gradient reduction.
     """
 

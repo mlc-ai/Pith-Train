@@ -339,11 +339,11 @@ def split_replicas(mesh: DeviceMesh, hsdp_replica: int) -> DeviceMesh:
 
 
 def apply_fsdp(model, hsdp_replica: int = 1):
-    # Two parameter classes, each with its own replica group. The expt parameters are the routed
+    # Two parameter classes, each with its own replica group. The expert parameters are the routed
     # expert weights, unique per EP rank and replicated over the dp axis of the expert view; the
-    # attn parameters are everything else, replicated over the whole dp x cp stage. Hence the
+    # attention parameters are everything else, replicated over the whole dp x cp stage. Hence the
     # separate fully_shard call on the experts below: the FSDP2 module walk stops at an
-    # already-sharded submodule, so the outer call never sees the expt parameters.
+    # already-sharded submodule, so the outer call never sees the expert parameters.
     expt_fsdp_mesh = distributed.expt_mesh["dp"]
     if hsdp_replica > 1:
         # Flatten under a separate name: _unflatten takes the flattened dim away from the mesh
